@@ -714,6 +714,8 @@ public class SlaveRelayConnection : RelayConnection
     private async Task ApplyKeyEvents(string sourceHost, KeyEventMessage[] events)
     {
         ShowCursorFor(sourceHost, mouse: false);
+        // a key press wakes a slept display, as it does at the machine itself
+        if (events.Any(e => e.Type == KeyEventType.KeyDown)) WakeDisplay();
         foreach (var keyEvent in events)
             await HandleKeyEvent(keyEvent);
     }
@@ -722,6 +724,8 @@ public class SlaveRelayConnection : RelayConnection
     private async Task HandleMouseButton(string sourceHost, MouseButtonMessage msg)
     {
         ShowCursorFor(sourceHost, mouse: true);
+        // a click wakes a slept display, as it does at the machine itself (a move does not) — an injected click alone leaves a locked Mac dark
+        if (msg.IsPressed) WakeDisplay();
         using (await _heldLock.WaitForDisposable())
         {
             if (msg.IsPressed)

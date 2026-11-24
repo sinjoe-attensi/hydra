@@ -1,4 +1,6 @@
+using Cathedral.Extensions;
 using Hydra.Keyboard;
+using Hydra.Mouse;
 using Hydra.Screen;
 using Hydra.Relay;
 using Tests.Setup;
@@ -204,6 +206,32 @@ public class SlaveDormancyTests
         {
             Assert.That(relay.Output.MoveCount, Is.EqualTo(1));
             Assert.That(sync.WakeDisplayCount, Is.Zero);
+        }
+    }
+
+    // awake but with the display asleep (a locked Mac turns it off and keeps its screens): a click or key press wakes
+    // it, as at the machine itself, and still lands
+    [Test]
+    public async Task NotDormant_Click_IsInjectedAndWakesTheDisplay()
+    {
+        var (relay, sync) = await Setup(dormant: false);
+        await relay.SimulateReceive(Master, MessageKind.MouseButton, new MouseButtonMessage(MouseButton.Left, true).ToSaneJson());
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(relay.Output.TotalInjections, Is.EqualTo(1));
+            Assert.That(sync.WakeDisplayCount, Is.EqualTo(1));
+        }
+    }
+
+    [Test]
+    public async Task NotDormant_KeyDown_IsInjectedAndWakesTheDisplay()
+    {
+        var (relay, sync) = await Setup(dormant: false);
+        await relay.SimulateReceive(Master, MessageKind.KeyEvent, """{"type":0,"modifiers":0,"character":"a"}""");
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(relay.Output.Keys, Has.Count.EqualTo(1));
+            Assert.That(sync.WakeDisplayCount, Is.EqualTo(1));
         }
     }
 }
