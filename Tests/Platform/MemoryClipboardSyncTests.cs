@@ -13,7 +13,7 @@ public class MemoryClipboardSyncTests
     public void Clear_ReadsAsEmpty_KeepsTheSelection_AndMovesTheCounter()
     {
         IClipboardPlatform clipboard = new MemoryClipboardSync();
-        clipboard.KeepSelection("selected");
+        clipboard.SetSelection("selected");
         clipboard.Clipboard.Write(new ClipboardContents("copied", null, null, null, false));
         var afterCopy = clipboard.Clipboard.Count();
         var cleared = clipboard.Clipboard.Write(ClipboardContents.Empty);
@@ -35,7 +35,7 @@ public class MemoryClipboardSyncTests
         var written = clipboard.Clipboard.Write(new ClipboardContents("copied", null, null, null, false));
         var before = clipboard.Clipboard.Version;
 
-        clipboard.KeepSelection("selected");
+        clipboard.SetSelection("selected");
 
         using (Assert.EnterMultipleScope())
         {

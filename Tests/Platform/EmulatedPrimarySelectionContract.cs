@@ -39,7 +39,7 @@ public abstract class EmulatedPrimarySelectionContract
     // Hydra's write as ClipboardUtils.ApplyPreservingFiles makes it: the selection beside it set first
     protected static ClipboardWrite Write(IClipboardPlatform platform, ClipboardSnapshot contents)
     {
-        if (contents.Selection is { } selection) platform.KeepSelection(selection);
+        if (contents.Selection is { } selection) platform.SetSelection(selection);
         return platform.Clipboard.Write(contents.Clipboard);
     }
 
@@ -109,7 +109,7 @@ public abstract class EmulatedPrimarySelectionContract
         Write(Snapshot("written", null, null));
         var before = Hydra.Clipboard.Version;
 
-        Hydra.KeepSelection("relayed selection");
+        Hydra.SetSelection("relayed selection");
 
         Assert.That(Hydra.Clipboard.Version, Is.EqualTo(before));
     }

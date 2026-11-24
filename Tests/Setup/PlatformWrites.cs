@@ -14,7 +14,7 @@ public static class PlatformWrites
     // the selection set first, then the clipboard; the placeholder alone is a clear
     private static ClipboardWrite Write(this IClipboardPlatform platform, ClipboardSnapshot contents)
     {
-        if (contents.Selection is { } selection) platform.KeepSelection(selection);
+        if (contents.Selection is { } selection) platform.SetSelection(selection);
         return platform.Clipboard.Write(ClipboardUtils.IsPlaceholder(contents.Clipboard) ? ClipboardContents.Empty : contents.Clipboard);
     }
 
@@ -39,7 +39,7 @@ public static class PlatformWrites
     public static SelectionRead ReadPrimary(this IClipboardPlatform platform) => platform.ReadSelection();
 
     // whether the platform kept it
-    public static bool SetPrimaryText(this IClipboardPlatform platform, string text) => platform.KeepSelection(text);
+    public static bool SetPrimaryText(this IClipboardPlatform platform, string text) => platform.SetSelection(text);
 
     public static bool HasFileClipboard(this IClipboardPlatform platform) => platform.Clipboard.HoldsFiles();
 }

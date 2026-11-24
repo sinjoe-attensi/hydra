@@ -27,7 +27,7 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
     // whether the clipboard is Hydra's own write, which counts as seen so
     private bool Ours()
     {
-        if (!_changes.StillHolds()) return false;
+        if (!platform.Clipboard.StillHolds()) return false;
         _oursAt = ++_clock;
         return true;
     }

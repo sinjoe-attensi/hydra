@@ -3,9 +3,10 @@ using Hydra.Platform;
 
 namespace Hydra.Relay;
 
-// Hydra's last write of a clipboard, one per clipboard, so a write made as master or as slave is never taken for the
-// user's copy by the other. A copy since a point is the clipboard's version moved past it and past that write's; every
-// answer of the version is null where the platform keeps none
+// Hydra's last write of a clipboard that replaced it, as the relay recorded it, one per clipboard, so a write made as
+// master or as slave is never taken for the user's copy by the other. A copy since a point is the clipboard's version
+// moved past it and past that write's; every answer of the version is null where the platform keeps none. Not the write
+// IClipboard.StillHolds judges, which is the platform's own last write, a failed one included
 public sealed class ClipboardChanges
 {
     private static readonly ConditionalWeakTable<IClipboard, ClipboardChanges> All = [];
@@ -43,7 +44,8 @@ public sealed class ClipboardChanges
     }
 
     // the write, where it replaced the clipboard
-    public ClipboardWrite.Written? Write(Func<ClipboardWrite> write) => Write(write, w => w as ClipboardWrite.Written) as ClipboardWrite.Written;
+    public ClipboardWrite.Written? Write(Func<ClipboardWrite> write) =>
+        Write(write, w => w as ClipboardWrite.Written) is ClipboardWrite.Written written ? written : null;
 
     // whether the user copied since at: the version moved past it and past Hydra's own last write; null when the platform
     // keeps no counter, or kept none at
@@ -56,10 +58,7 @@ public sealed class ClipboardChanges
         return now != at && now != Last?.At;
     }
 
-    // whether the clipboard still holds Hydra's last write here (IClipboard.StillHolds)
-    public bool StillHolds() => _clipboard.StillHolds();
-
-    // whether the clipboard's version is still the one Hydra's last write here left, nothing copied since: never, before
-    // Hydra wrote here; StillHolds where the platform keeps no counter
-    public bool VersionIsLastWrite() => _clipboard.Version is { } now ? Last?.At == now : StillHolds();
+    // whether the clipboard's version is still the one Last left, nothing copied since: never, before Hydra wrote here;
+    // IClipboard.StillHolds where the platform keeps no counter
+    public bool VersionIsLastWrite() => _clipboard.Version is { } now ? Last?.At == now : _clipboard.StillHolds();
 }

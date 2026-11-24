@@ -33,11 +33,12 @@ public interface IClipboardPlatform
 public interface IClipboard
 {
     // every format (HTML portable, without Windows' CF_HTML wrapper) and whether it carries a password manager's
-    // concealed/transient markers, in one read
+    // concealed/transient markers, in one read. A clear's placeholder reads back as it stands (ClipboardUtils.IsPlaceholder),
+    // not as Empty: ReadWithFallback takes it as empty
     ClipboardRead Read();
 
     // atomically clears and writes the given contents and says what it took: the contents less any format the clipboard
-    // refused. Empty contents are a clear: the placeholder, which Hydra reads as empty and never as secret, marked
+    // refused. Empty contents are a clear: the placeholder, which ReadWithFallback takes as empty and never as secret, marked
     // no-history/no-cloud where the platform has such markers (kept out of clipboard history and cloud sync, yet left
     // for clipboard managers to see), taken as Empty. A secret copy's markers are written before its content, so no
     // clipboard manager or monitor sees the content without them; a copy whose markers were refused is never written
@@ -48,16 +49,19 @@ public interface IClipboard
     // copied files, which Hydra leaves as they are
     bool HoldsFiles() => false;
 
-    // the OS clipboard's change counter, which only grows: moved by every copy (X11: only with XFixes, else only
-    // on an owner change) and every one of Hydra's own writes, never by a write of the primary selection alone, so a copy
-    // made since a point is told apart from content that merely matches; null where the platform keeps none. The version
-    // a write of Hydra's left travels in its Written.At
+    // the clipboard's version: the OS clipboard's change counter, which only grows: moved by every copy (X11: only with
+    // XFixes, else only on an owner change) and every one of Hydra's own writes, never by a write of the primary selection
+    // alone, so a copy made since a point is told apart from content that merely matches; null where the platform keeps
+    // none. The version a write of Hydra's left travels in its Written.At
     ClipboardVersion? Version => null;
 
-    // whether nothing has replaced Hydra's last write here since, so a read that finds no format (its echo suppressed)
-    // can still mean it: the clipboard is still at the version that write reported, a failed write's too (Windows, macOS,
-    // the portal), or Hydra still owns it (X11, wl-clipboard); false before any write there. A clipboard that tracks
-    // neither answers true
+    // whether nothing has replaced this platform's last write since, so a read that finds no format (its echo suppressed)
+    // can still mean it. The platform judges its own last write, a failed one included where it reported a version, not
+    // the relay's ClipboardChanges.Last (only writes that replaced the clipboard): Windows, macOS and the portal by the
+    // version still being the one that write reported, X11 and wl-clipboard by still owning the clipboard; false before
+    // any write there. A clipboard that tracks neither answers true. No Written to judge, unlike the design's
+    // StillHolds(Written): judging the relay's last write would answer false after a failed write that moved the version,
+    // where the old CanUseEchoFallback answered true
     bool StillHolds() => true;
 }
 
@@ -71,18 +75,23 @@ public interface IPrimarySelection
 }
 
 // A clipboard with no primary selection of its own, whose text copies EmulatedPrimarySelection keeps as one. Counter is
-// Version as the OS keeps it, never null, which only grows; ReadTextCopy reads the text of a text copy: none for one whose
-// text only names an image or files we send instead, or for a password manager's secret copy; unreadable when the
-// clipboard cannot be read, to be tried again. These members may throw: only EmulatedPrimarySelection calls them, and it
-// catches
+// the native change counter EmulatedPrimarySelection versions by, never null, which only grows; Version reads the same
+// counter where it can, but differs where it cannot: null on macOS with no pasteboard, the fallback's on the portal while
+// one is in use. ReadTextCopy reads the text of a text copy: none for one whose text only names an image or files we send
+// instead, or for a password manager's secret copy; unreadable when the clipboard cannot be read, to be tried again. These
+// members may throw: only EmulatedPrimarySelection calls them, and it catches
 public interface ISelectionlessClipboard : IClipboard
 {
     long Counter();
 
     SelectionRead ReadTextCopy();
 
-    // Write, reporting the version it leaves the clipboard at as soon as it knows it, even a failed or partial write's
+    // Write, reporting the counter it leaves the clipboard at as soon as it knows it, even a failed or partial write's
     ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt);
+
+    // that Write, with the work it needs before touching the clipboard done now (Windows converts an image), so
+    // EmulatedPrimarySelection does it before its write begins, while a copy the user makes meanwhile is still caught
+    Func<Action<long>, ClipboardWrite> Prepare(ClipboardContents contents) => leftAt => Write(contents, leftAt);
 }
 
 // a clipboard whose emulated selection is set in the same step as a write beside it, so a copy the user makes before the

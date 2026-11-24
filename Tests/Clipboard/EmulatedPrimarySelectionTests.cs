@@ -15,6 +15,8 @@ public class EmulatedPrimarySelectionTests
     private int _reads;
     // the write the clipboard makes next: it reports the version it leaves, and says whether it replaced the clipboard
     private Func<Action<long>, bool> _writing = _ => true;
+    // what happens while the clipboard prepares its next write, before the write begins
+    private Action _preparing = () => { };
     private EmulatedPrimarySelection _primary = null!;
 
     [SetUp]
@@ -24,6 +26,7 @@ public class EmulatedPrimarySelectionTests
         _text = null;
         _busy = false;
         _reads = 0;
+        _preparing = () => { };
         _primary = new EmulatedPrimarySelection(new OsClipboard(this), NullLogger.Instance);
     }
 
@@ -67,6 +70,12 @@ public class EmulatedPrimarySelectionTests
         }
 
         public ClipboardWrite Write(ClipboardContents contents) => Write(contents, _ => { });
+
+        public Func<Action<long>, ClipboardWrite> Prepare(ClipboardContents contents)
+        {
+            os._preparing();
+            return leftAt => Write(contents, leftAt);
+        }
 
         public ClipboardRead Read() => new ClipboardRead.Contents(ClipboardContents.Empty);
     }
@@ -276,6 +285,17 @@ public class EmulatedPrimarySelectionTests
         HydraWrites(null, "written");
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied since"));
+    }
+
+    [Test]
+    public void Write_ACopyMadeWhileTheWriteIsPrepared_IsThePrimary()
+    {
+        // Windows converts an image before its write begins: a copy made meanwhile is the user's, found before the write
+        _primary.Write("selected on linux");
+        _preparing = () => UserCopies("copied while preparing");
+        HydraWrites(null, "written");
+
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied while preparing"));
     }
 
     [Test]

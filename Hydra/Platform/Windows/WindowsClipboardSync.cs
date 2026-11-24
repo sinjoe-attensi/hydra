@@ -215,12 +215,14 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
         }
     }
 
-    public ClipboardWrite Write(ClipboardContents asked, Action<long> leftAt)
+    public ClipboardWrite Write(ClipboardContents asked, Action<long> leftAt) => Prepare(asked)(leftAt);
+
+    // the DIB beside an image is converted before the clipboard is opened, and before the write begins
+    public Func<Action<long>, ClipboardWrite> Prepare(ClipboardContents asked)
     {
         var contents = ClipboardUtils.Writing(asked);
-        // the DIB beside an image is converted before the clipboard is opened
         var dib = contents.Png is { } png ? PngToDibV5(png) : null;
-        return _lastWrite.Write(asked, left =>
+        return leftAt => _lastWrite.Write(asked, left =>
         {
             lock (OpenLock)
             {

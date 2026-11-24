@@ -39,8 +39,8 @@ public static class ClipboardUtils
     // the selection as it stands, none where the platform keeps none
     public static SelectionRead ReadSelection(this IClipboardPlatform platform) => platform.PrimarySelection?.Read() ?? new SelectionRead.None();
 
-    // whether the platform kept the selection; never where it keeps none
-    public static bool KeepSelection(this IClipboardPlatform platform, string text) => platform.PrimarySelection?.Write(text) is SelectionWrite.Kept;
+    // sets the selection to text; whether this host kept it, never where it keeps none
+    public static bool SetSelection(this IClipboardPlatform platform, string text) => platform.PrimarySelection?.Write(text) is SelectionWrite.Kept;
 
     // the selection as it stands; one that could not be read is none
     private static string? SelectionText(IClipboardPlatform platform) => platform.ReadSelection() is SelectionRead.Text { Value: var text } ? text : null;
@@ -60,7 +60,7 @@ public static class ClipboardUtils
     // a hash every host computes alike, for what crosses the wire
     public static ulong StableHash(string text) => XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(text));
 
-    // what a clear writes, never crossing the contract: a write of Empty writes it, and the write takes it as Empty
+    // what a clear writes: a write of Empty writes it, and the write takes it as Empty (IClipboard.Write)
     private static readonly ClipboardContents Placeholder = new(PlaceholderText, null, null, null, false);
 
     // what a write of contents writes: the placeholder for a clear
@@ -69,7 +69,8 @@ public static class ClipboardUtils
     // the placeholder alone, which is never content
     public static bool IsPlaceholder(ClipboardContents contents) => contents is { Text: PlaceholderText, Png: null, Html: null, Rtf: null };
 
-    // a write of asked that replaced the clipboard: what it wrote, Empty for a clear, at the count it left
+    // a write of asked that replaced the clipboard: what it wrote, Empty for a clear, at the version it left (the native
+    // counter, null where the platform keeps none)
     public static ClipboardWrite.Written Written(ClipboardContents asked, ClipboardContents written, long? at) =>
         new(asked.IsEmpty ? ClipboardContents.Empty : written, at is { } count ? new ClipboardVersion(count) : null);
 
@@ -113,23 +114,23 @@ public static class ClipboardUtils
     public static Applied? ApplyPreservingFiles(IClipboardPlatform platform, ClipboardSnapshot copy, ILogger log, string context)
     {
         if (copy.IsEmpty) return null;
-        if (copy.Clipboard.IsEmpty) return KeptSelection(platform, copy.Selection);
+        if (copy.Clipboard.IsEmpty) return SetSelectionAlone(platform, copy.Selection);
         if (platform.Clipboard.HoldsFiles())
         {
             if (log.IsEnabled(LogLevel.Information))
                 log.LogInformation("Clipboard {Context} skipped because the local clipboard contains files", context);
-            return KeptSelection(platform, copy.Selection);
+            return SetSelectionAlone(platform, copy.Selection);
         }
 
         var write = WriteBeside(platform, copy.Clipboard, copy.Selection);
         // the selection is set again after a failed write, or one that took no format, since only the selection's write
         // says whether this host could keep it
-        if (write is not ClipboardWrite.Written written) return new Applied.Failed(write, KeptSelection(platform, copy.Selection));
+        if (write is not ClipboardWrite.Written written) return new Applied.Failed(write, SetSelectionAlone(platform, copy.Selection));
         if (IsPlaceholder(written.Taken))
             return IsPlaceholder(copy.Clipboard)
                 ? new Applied.Cleared(written, copy.Selection)
-                : new Applied.MarkersRefused(written, KeptSelection(platform, copy.Selection));
-        if (written.Taken.IsEmpty) return new Applied.Failed(written, KeptSelection(platform, copy.Selection));
+                : new Applied.MarkersRefused(written, SetSelectionAlone(platform, copy.Selection));
+        if (written.Taken.IsEmpty) return new Applied.Failed(written, SetSelectionAlone(platform, copy.Selection));
         return new Applied.Copy(written, copy.Selection);
     }
 
@@ -139,13 +140,14 @@ public static class ClipboardUtils
     {
         if (platform.Clipboard is IWritesBesideSelection beside) return beside.Write(contents, selection);
         var write = platform.Clipboard.Write(contents);
-        if (selection != null && write is ClipboardWrite.Written) platform.KeepSelection(selection);
+        if (selection != null && write is ClipboardWrite.Written) platform.SetSelection(selection);
         return write;
     }
 
-    // the selection alone; none when not kept
-    public static Applied.SelectionAlone? KeptSelection(IClipboardPlatform platform, string? selection) =>
-        selection != null && platform.KeepSelection(selection) && selection.Length > 0 ? new Applied.SelectionAlone(selection) : null;
+    // sets the selection alone, the clipboard left as it is; none when there is none to set, this host did not keep it, or
+    // it is empty (set all the same)
+    public static Applied.SelectionAlone? SetSelectionAlone(IClipboardPlatform platform, string? selection) =>
+        selection != null && platform.SetSelection(selection) && selection.Length > 0 ? new Applied.SelectionAlone(selection) : null;
 
     // drop fields until the combined size fits. the selection goes first if that alone makes it fit, as the one thing
     // the user did not copy; then image, the rich reps (html, rtf), the selection, and LAST the universal plain text

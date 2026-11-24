@@ -14,7 +14,8 @@ public sealed record ClipboardContents(string? Text, string? Html, byte[]? Rtf, 
 public readonly record struct ClipboardVersion(long Value);
 
 // one read of the clipboard, before any echo fallback: what it holds, copied files (read as nothing else), or a
-// clipboard that could not be read, which says nothing of what it holds and is never empty
+// clipboard that could not be read, which says nothing of what it holds and is never empty. Contents may be a clear's
+// placeholder as it stands (ClipboardUtils.IsPlaceholder), which ReadWithFallback takes as empty
 public abstract record ClipboardRead
 {
     private ClipboardRead() { }
@@ -38,16 +39,19 @@ public abstract record SelectionRead
     public sealed record Unreadable(string Reason, Exception? Cause = null) : SelectionRead;
 }
 
-// one write of the clipboard: what it took, at the version it left (the count the write itself saw, else the counter right
-// after it; null where the platform keeps none); a clipboard it did not replace; or one that could not be read where the
-// write needed to. A write that did not replace the clipboard may still have moved the counter
+// one write of the clipboard: what it took, at the version the clipboard is at once the write landed (as the platform
+// reports it, else read right after; null where the platform keeps none); a clipboard it did not replace; or one that
+// could not be read where the write needed to. A write that did not replace the clipboard may still have moved the
+// version, which the platform alone tracks, for StillHolds: NotReplaced carries none
 public abstract record ClipboardWrite
 {
     private ClipboardWrite() { }
 
     // Taken: the contents less any format the clipboard refused, so no format at all when it refused every one; Empty for
     // a clear. A secret copy whose markers were refused: the placeholder that went in its place (ClipboardUtils.IsPlaceholder),
-    // less its text when that was refused too
+    // less its text when that was refused too. That placeholder crosses the contract, unlike the design's, which keeps it
+    // inside platforms: as Empty, "placeholder taken" could not be told from "placeholder refused", which Hydra handles
+    // apart (Applied.MarkersRefused, Applied.Failed)
     public sealed record Written(ClipboardContents Taken, ClipboardVersion? At) : ClipboardWrite;
 
     public sealed record NotReplaced(string Reason) : ClipboardWrite;

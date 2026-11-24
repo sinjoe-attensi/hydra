@@ -141,7 +141,7 @@ public static class ClipboardWire
         string context)
     {
         var selection = Fit(Primary(beside.Text, m.PrimaryText, m.PrimaryIsText), "primary text", log, context);
-        return selection != beside.Selection ? ClipboardUtils.KeptSelection(platform, selection) : null;
+        return selection != beside.Selection ? ClipboardUtils.SetSelectionAlone(platform, selection) : null;
     }
 
     // the text if it is within the limit, else null and a warning; empty is null

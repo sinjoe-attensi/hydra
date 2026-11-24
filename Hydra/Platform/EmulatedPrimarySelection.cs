@@ -46,19 +46,27 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
     // Hydra's own write of the clipboard, with the selection beside it unless null: until it ends, what is on the
     // clipboard is no copy of the user's. The clipboard reports the version it leaves as soon as it knows it, even a
     // failed or partial write's; a failure is logged, not thrown. The gate is never held across the write, so a platform
-    // may take its own clipboard lock inside it
+    // may take its own clipboard lock inside it. The write is prepared before it begins, so a copy made meanwhile is caught
     internal ClipboardWrite WriteClipboard(ClipboardContents contents, string? selection)
     {
+        Func<Action<long>, ClipboardWrite> write;
+        try
+        {
+            write = _clipboard.Prepare(contents);
+        }
+        catch (Exception ex)
+        {
+            return WriteFailed(ex);
+        }
         if (!Begin(selection)) return new ClipboardWrite.NotReplaced("the clipboard's version could not be read");
         long? left = null;
         try
         {
-            return _clipboard.Write(contents, v => left = v);
+            return write(v => left = v);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Failed to write clipboard");
-            return new ClipboardWrite.NotReplaced(ex.Message);
+            return WriteFailed(ex);
         }
         finally
         {
@@ -68,6 +76,12 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
                 _writing--;
             }
         }
+    }
+
+    private ClipboardWrite WriteFailed(Exception ex)
+    {
+        _log.LogWarning(ex, "Failed to write clipboard");
+        return new ClipboardWrite.NotReplaced(ex.Message);
     }
 
     // a copy made since Hydra last touched the clipboard is looked for before the write begins, and is older than the

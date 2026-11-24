@@ -35,7 +35,6 @@ public sealed class ClipboardStreamReceiver(IClipboardPlatform platform, Func<st
     // sender trims to fit it (ClipboardEncoding)
     public static readonly int MaxTotalBytes = (int)(ClipboardUtils.MaxClipboardBytes * 2);
 
-    private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
     private readonly Lock _lock = new();
     private readonly Dictionary<string, IncomingStream> _byHost = new(StringComparer.OrdinalIgnoreCase);
     // the last host to start a clipboard and its stream's id, null until it begins one; the hosts it superseded wait
@@ -335,7 +334,7 @@ public sealed class ClipboardStreamReceiver(IClipboardPlatform platform, Func<st
             before = stream.Decision;
         }
         // the platform is asked outside _lock, which it must never wait under
-        if (before != BeginDecision.ClearFailed) return before == BeginDecision.Keep || _changes.StillHolds();
+        if (before != BeginDecision.ClearFailed) return before == BeginDecision.Keep || platform.Clipboard.StillHolds();
         var decision = begun(host, stream.Begin.ContentHash);
         lock (_lock)
             if (_byHost.TryGetValue(host, out var current) && current == stream) stream.Decision = decision;
