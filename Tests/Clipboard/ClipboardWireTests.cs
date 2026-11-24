@@ -1,6 +1,7 @@
 using Hydra.Platform;
 using Hydra.Relay;
 using Microsoft.Extensions.Logging.Abstractions;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -13,23 +14,23 @@ public class ClipboardWireTests
     [Test]
     public void PrimaryRepeatingTheText_IsSentOnce()
     {
-        var push = ClipboardWire.ToPush(new ClipboardSnapshot("copied", "copied", null));
-        var response = ClipboardWire.AnswerPull(new ClipboardSnapshot("copied", "copied", null), new ClipboardPullMessage(1));
+        var push = ClipboardWire.ToPush(Snapshot("copied", "copied", null));
+        var response = ClipboardWire.AnswerPull(Snapshot("copied", "copied", null), new ClipboardPullMessage(1));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(push.PrimaryText, Is.Null);
             Assert.That(push.PrimaryIsText, Is.True);
-            Assert.That(ClipboardWire.From(push, Log, "push from peer").PrimaryText, Is.EqualTo("copied"));
+            Assert.That(ClipboardWire.From(push, Log, "push from peer").Selection, Is.EqualTo("copied"));
             Assert.That(response.PrimaryText, Is.Null);
-            Assert.That(ClipboardWire.From(response, Log, "pull response from peer").PrimaryText, Is.EqualTo("copied"));
+            Assert.That(ClipboardWire.From(response, Log, "pull response from peer").Selection, Is.EqualTo("copied"));
         }
     }
 
     [Test]
     public void PrimaryOfItsOwn_IsSentAsIs()
     {
-        var push = ClipboardWire.ToPush(new ClipboardSnapshot("copied", "selected", null));
+        var push = ClipboardWire.ToPush(Snapshot("copied", "selected", null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -41,35 +42,35 @@ public class ClipboardWireTests
     [Test]
     public void ConcealedCopy_CrossesConcealed_BothWays()
     {
-        var concealed = new ClipboardSnapshot("hunter2", null, null, Concealed: true);
+        var concealed = Snapshot("hunter2", null, null, Concealed: true);
         var push = RoundTrip(MessageKind.ClipboardPush, ClipboardWire.ToPush(concealed));
         var answer = RoundTrip(MessageKind.ClipboardPullResponse, ClipboardWire.AnswerPull(concealed, new ClipboardPullMessage(1)));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(push.Concealed, Is.True);
-            Assert.That(ClipboardWire.From(push, Log, "push from peer").Concealed, Is.True);
+            Assert.That(ClipboardWire.From(push, Log, "push from peer").Clipboard.Secret, Is.True);
             Assert.That(answer.Concealed, Is.True);
-            Assert.That(ClipboardWire.From(answer, Log, "pull response from peer").Concealed, Is.True);
+            Assert.That(ClipboardWire.From(answer, Log, "pull response from peer").Clipboard.Secret, Is.True);
         }
     }
 
     [Test]
     public void PlainCopy_CarriesNoConcealedFlag()
     {
-        var push = ClipboardWire.ToPush(new ClipboardSnapshot("plain", null, null));
+        var push = ClipboardWire.ToPush(Snapshot("plain", null, null));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(push.Concealed, Is.Null);
-            Assert.That(ClipboardWire.From(push, Log, "push from peer").Concealed, Is.False);
+            Assert.That(ClipboardWire.From(push, Log, "push from peer").Clipboard.Secret, Is.False);
         }
     }
 
     [Test]
     public void ConcealedCopy_IsDescribedWithoutItsText()
     {
-        var described = ClipboardWire.Describe(ClipboardWire.ToPush(new ClipboardSnapshot("hunter2", null, null, Concealed: true)));
+        var described = ClipboardWire.Describe(ClipboardWire.ToPush(Snapshot("hunter2", null, null, Concealed: true)));
 
         using (Assert.EnterMultipleScope())
         {

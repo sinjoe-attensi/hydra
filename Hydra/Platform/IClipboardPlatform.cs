@@ -2,51 +2,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Platform;
 
-// snapshot of clipboard state with the selection beside it — the unit synced between peers and the echo-suppression
-// fallback; the platforms see the two apart (IClipboardPlatform).
-// Html is portable raw HTML (no Windows CF_HTML wrapper); Rtf is raw RTF bytes. Both are optional
-// rich representations that ride alongside the plain Text (which stays the universal fallback).
-// Concealed: a password manager's copy, kept out of history and cloud sync wherever it is written.
-public record ClipboardSnapshot(string? Text, string? PrimaryText, byte[]? ImagePng, string? Html = null, byte[]? Rtf = null, bool Concealed = false)
-{
-    // anything for the clipboard itself, beside the selection
-    public bool HasClipboard => !string.IsNullOrEmpty(Text) || ImagePng != null || Html != null || Rtf != null;
-
-    public bool HasSelection => !string.IsNullOrEmpty(PrimaryText);
-
-    public bool SelectionIsText => IsCopyOfText(PrimaryText, Text);
-
-    public static bool IsCopyOfText(string? primaryText, string? text) => text != null && primaryText == text;
-
-    public bool IsEmpty => !HasClipboard && !HasSelection;
-
-    public bool IsSelectionOnly => !HasClipboard && HasSelection;
-
-    public static ClipboardSnapshot? SelectionOnly(string? selection) => string.IsNullOrEmpty(selection) ? null : new ClipboardSnapshot(null, selection, null);
-
-    // nothing for the clipboard, and no selection to change
-    public static readonly ClipboardSnapshot Empty = new(null, null, null);
-
-    // what a clear writes: clipboard managers refill an empty clipboard, which would read as the user's copy
-    public const string PlaceholderText = " ";
-
-    public static readonly ClipboardSnapshot Placeholder = new(PlaceholderText, null, null);
-
-    // the placeholder alone, which is never content
-    public static bool IsPlaceholder(string? text, byte[]? image, string? html, byte[]? rtf) =>
-        text == PlaceholderText && image == null && html == null && rtf == null;
-
-    // a clear's write: the placeholder, whatever selection beside it
-    public bool IsClear => IsPlaceholder(Text, ImagePng, Html, Rtf);
-
-    // the clipboard's part, as a platform writes it: the placeholder is a clear, which writes Empty
-    public ClipboardContents Clipboard => IsClear ? ClipboardContents.Empty : new ClipboardContents(Text, Html, Rtf, ImagePng, Concealed);
-
-    // a read of the clipboard with the selection beside it
-    public static ClipboardSnapshot Of(ClipboardContents contents, string? primaryText) =>
-        new(contents.Text, primaryText, contents.Png, contents.Html, contents.Rtf, contents.Secret);
-}
-
 // a clipboard that could not be read, which says nothing of what it holds: held open by another app, an owner that
 // never answered, a native call that failed. Thrown only inside a platform, which answers it as Unreadable
 internal sealed class ClipboardUnreadableException(string message, Exception? inner = null) : Exception(message, inner)

@@ -58,25 +58,25 @@ public class ClipboardEdgeEncodingTests
         var image = new byte[Cap];
         var html = Fill("<", Cap);
 
-        var trimmed = ClipboardUtils.TrimToFit("x", null, image, html, null, NullLogger.Instance, Context);
+        var trimmed = ClipboardUtils.TrimToFit(new ClipboardContents("x", html, null, image, false), null, NullLogger.Instance, Context);
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(trimmed.ImagePng, Is.Null);
-            Assert.That(trimmed.Html, Is.Null);
-            Assert.That(trimmed.Text, Is.EqualTo("x"));
+            Assert.That(trimmed.Clipboard.Png, Is.Null);
+            Assert.That(trimmed.Clipboard.Html, Is.Null);
+            Assert.That(trimmed.Clipboard.Text, Is.EqualTo("x"));
         }
     }
 
     // the snapshot as TrimToFit returns it, which must have kept every field given
     private static ClipboardSnapshot Trimmed(string text, byte[]? image, string? html)
     {
-        var trimmed = ClipboardUtils.TrimToFit(text, null, image, html, null, NullLogger.Instance, Context);
+        var trimmed = ClipboardUtils.TrimToFit(new ClipboardContents(text, html, null, image, false), null, NullLogger.Instance, Context);
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(trimmed.Text, Is.SameAs(text), "TrimToFit dropped the text");
-            Assert.That(trimmed.ImagePng, Is.SameAs(image), "TrimToFit dropped the image");
-            Assert.That(trimmed.Html, Is.SameAs(html), "TrimToFit dropped the html");
+            Assert.That(trimmed.Clipboard.Text, Is.SameAs(text), "TrimToFit dropped the text");
+            Assert.That(trimmed.Clipboard.Png, Is.SameAs(image), "TrimToFit dropped the image");
+            Assert.That(trimmed.Clipboard.Html, Is.SameAs(html), "TrimToFit dropped the html");
         }
         return trimmed;
     }
@@ -94,7 +94,7 @@ public class ClipboardEdgeEncodingTests
         using var receiver = new ClipboardStreamReceiver(new FakeClipboardSync(), (_, _) => BeginDecision.Cleared, _ => BeginDecision.Cleared,
             new FakeTimeProvider(), NullLogger.Instance);
         receiver.Failed += _ => failed++;
-        var stream = StreamedClipboard.Split(1, blob, ClipboardStreamSender.ChunkBytes, MessageKind.ClipboardPush, ClipboardUtils.ClipboardHash(snapshot));
+        var stream = StreamedClipboard.Split(1, blob, ClipboardStreamSender.ChunkBytes, MessageKind.ClipboardPush, ClipboardUtils.ClipboardHash(snapshot.Clipboard));
 
         receiver.OnBegin(Host, stream.Begin);
         DecodedMessage? completed = null;

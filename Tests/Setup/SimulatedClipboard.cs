@@ -43,7 +43,7 @@ public sealed class SimulatedClipboard : IClipboardPlatform
     }
 
     // what is on the clipboard, a clear's placeholder reading as nothing; Read reads it as it stands
-    public string? Text => _text == ClipboardSnapshot.PlaceholderText ? null : _text;
+    public string? Text => _text == ClipboardUtils.PlaceholderText ? null : _text;
     private string? _text;
     public byte[]? ImagePng { get; private set; }
     public string? Primary => this.ReadSelection() is SelectionRead.Text { Value: var primary } ? primary : null;
@@ -113,7 +113,7 @@ public sealed class SimulatedClipboard : IClipboardPlatform
             return MessageSerializer.Decode(blob).Deserialize<T>();
         }
 
-        var contentHash = ClipboardUtils.ClipboardHash(ClipboardWire.From(message, Log, "stream"));
+        var contentHash = ClipboardWire.ContentHash(message, Log, "stream");
         var pullId = (message as ClipboardPullResponseMessage)?.PullId;
         var stream = StreamedClipboard.Split(Interlocked.Increment(ref _streamIds), blob, ClipboardStreamSender.ChunkBytes, kind, contentHash, pullId: pullId);
         receiver.OnBegin(from, RoundTrip(MessageKind.ClipboardStreamBegin, stream.Begin));

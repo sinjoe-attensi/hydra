@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay;
 
@@ -217,7 +218,7 @@ public class SlaveClipboardStreamTests
 
         _clipboard.SetupText("the user's copy");
         _clipboard.StillHoldsValue = false;
-        var landed = ClipboardWire.ToHash(new ClipboardSnapshot(BigText('a'), null, null));
+        var landed = ClipboardWire.ToHash(Snapshot(BigText('a'), null, null));
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, landed.ToSaneJson());
         await Pull(slave, 9, landed.Hash);
 
@@ -904,12 +905,12 @@ public class SlaveClipboardStreamTests
         _clipboard.SetupImage(image);
         var slave = Slave();
         var selection = new string('s', 5000);
-        var master = new ClipboardSnapshot(null, selection, image);
+        var master = Snapshot(null, selection, image);
 
         // the master's clipboard is the image already here, its selection new: only that is asked for
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, ClipboardWire.ToHash(master).ToSaneJson());
         var push = ClipboardWire.ToPush(master);
-        var stream = StreamedPush(2, push, ClipboardUtils.ClipboardHash(master));
+        var stream = StreamedPush(2, push, ClipboardUtils.ClipboardHash(master.Clipboard));
         await Begin(slave, stream);
         var atBegin = new { _clipboard.ClearClipboardCallCount, _clipboard.ImagePng };
         await Chunks(slave, stream);

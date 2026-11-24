@@ -6,23 +6,23 @@ namespace Tests.Setup;
 public static class PlatformWrites
 {
     // Hydra's write as ClipboardUtils.ApplyPreservingFiles makes it, the selection beside it set first: what it took, with
-    // the selection beside it (the placeholder for a clear, or for a concealed copy whose markers were refused), null
-    // when it did not replace the clipboard
-    public static ClipboardSnapshot? SetClipboard(this IClipboardPlatform platform, ClipboardSnapshot contents)
+    // the selection beside it (Empty for a clear, or for a concealed copy whose markers were refused), null when it did
+    // not replace the clipboard
+    public static ClipboardSnapshot? SetClipboard(this IClipboardPlatform platform, ClipboardSnapshot contents) =>
+        platform.Write(contents) is ClipboardWrite.Written { Taken: var taken } ? new ClipboardSnapshot(taken, contents.Selection) : null;
+
+    // the selection set first, then the clipboard; the placeholder alone is a clear
+    private static ClipboardWrite Write(this IClipboardPlatform platform, ClipboardSnapshot contents)
     {
-        if (contents.PrimaryText is { } selection) platform.KeepSelection(selection);
-        return platform.Clipboard.Write(contents.Clipboard) is ClipboardWrite.Written { Taken: var taken } ? ClipboardUtils.Wrote(contents, taken) : null;
+        if (contents.Selection is { } selection) platform.KeepSelection(selection);
+        return platform.Clipboard.Write(ClipboardUtils.IsPlaceholder(contents.Clipboard) ? ClipboardContents.Empty : contents.Clipboard);
     }
 
     // whether the clear replaced the clipboard
     public static bool ClearClipboard(this IClipboardPlatform platform) => platform.Clipboard.Write(ClipboardContents.Empty) is ClipboardWrite.Written;
 
     // Hydra's write as SetClipboard makes it, and the write itself, which fails the test when it did not replace the clipboard
-    public static ClipboardWrite.Written Written(this IClipboardPlatform platform, ClipboardSnapshot contents)
-    {
-        if (contents.PrimaryText is { } selection) platform.KeepSelection(selection);
-        return Replaced(platform.Clipboard.Write(contents.Clipboard));
-    }
+    public static ClipboardWrite.Written Written(this IClipboardPlatform platform, ClipboardSnapshot contents) => Replaced(platform.Write(contents));
 
     // the clear, which fails the test when it did not replace the clipboard
     public static ClipboardWrite.Written Cleared(this IClipboardPlatform platform) => Replaced(platform.Clipboard.Write(ClipboardContents.Empty));

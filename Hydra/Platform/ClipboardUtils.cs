@@ -10,11 +10,14 @@ public static class ClipboardUtils
 {
     public static readonly long MaxClipboardBytes = (long)ByteSize.FromMebiBytes(16).Bytes;
 
-    // reads from sync, falling back to the snapshot only when every clipboard field is null and the clipboard still holds
-    // lastWritten, Hydra's last write, whose echo was suppressed; a fresh copy of any one type keeps stale fields from
-    // coming back. The selection is read as it stands, never from the fallback. Null when the clipboard could not be read,
-    // which is unknown, never empty
-    public static ClipboardSnapshot? ReadWithFallback(IClipboardPlatform platform, ClipboardSnapshot? fallback, ClipboardWrite.Written lastWritten,
+    // what a clear writes: clipboard managers refill an empty clipboard, which would read as the user's copy
+    public const string PlaceholderText = " ";
+
+    // reads from sync, falling back to the clipboard Hydra last took from a peer only when every format is null and the
+    // clipboard still holds lastWritten, Hydra's last write, whose echo was suppressed; a fresh copy of any one type keeps
+    // stale formats from coming back. The selection is read as it stands, never from the fallback. Null when the clipboard
+    // could not be read, which is unknown, never empty
+    public static ClipboardSnapshot? ReadWithFallback(IClipboardPlatform platform, ClipboardContents? fallback, ClipboardWrite.Written lastWritten,
         ILogger log, string context)
     {
         switch (platform.Clipboard.Read())
@@ -24,7 +27,7 @@ public static class ClipboardUtils
             case ClipboardRead.Files:
                 if (log.IsEnabled(LogLevel.Debug))
                     log.LogDebug("Clipboard {Context} contains files; preserving the native file clipboard", context);
-                return TrimToFit(null, SelectionText(platform), null, null, null, log, context);
+                return TrimToFit(ClipboardContents.Empty, SelectionText(platform), log, context);
             case ClipboardRead.Unreadable unreadable:
                 log.LogWarning(unreadable.Cause, "Clipboard {Context}: the clipboard could not be read ({Reason}), so nothing is known of it this time",
                     context, unreadable.Reason);
@@ -43,48 +46,30 @@ public static class ClipboardUtils
     // the selection as it stands; one that could not be read is none
     private static string? SelectionText(IClipboardPlatform platform) => platform.ReadSelection() is SelectionRead.Text { Value: var text } ? text : null;
 
-    private static ClipboardSnapshot Read(IClipboardPlatform platform, ClipboardContents read, ClipboardSnapshot? fallback, ClipboardWrite.Written lastWritten,
+    private static ClipboardSnapshot Read(IClipboardPlatform platform, ClipboardContents read, ClipboardContents? fallback, ClipboardWrite.Written lastWritten,
         ILogger log, string context)
     {
-        var text = read.Text;
-        var primaryText = SelectionText(platform);
-        var image = read.Png;
-        var html = read.Html;
-        var rtf = read.Rtf;
-        var concealed = read.Secret;
+        var selection = SelectionText(platform);
         // a clear's placeholder read back, as when Hydra no longer owns it, is no content, and never concealed
-        if (ClipboardSnapshot.IsPlaceholder(text, image, html, rtf))
-        {
-            text = null;
-            concealed = false;
-        }
-        if (text == null && image == null && html == null && rtf == null && platform.Clipboard.StillHolds(lastWritten))
-        {
-            text = fallback?.Text;
-            image = fallback?.ImagePng;
-            html = fallback?.Html;
-            rtf = fallback?.Rtf;
-            concealed = fallback?.Concealed ?? false;
-        }
+        if (IsPlaceholder(read)) read = ClipboardContents.Empty;
+        if (read is { Text: null, Png: null, Html: null, Rtf: null } && platform.Clipboard.StillHolds(lastWritten))
+            read = fallback ?? ClipboardContents.Empty;
         // image and rich text are mutually-exclusive copy actions: an image copy wins outright; otherwise
         // carry the text plus its rich (html/rtf) representations.
-        var trimmed = image != null
-            ? TrimToFit(null, primaryText, image, null, null, log, context)
-            : TrimToFit(text, primaryText, null, html, rtf, log, context);
-        return concealed ? trimmed with { Concealed = true } : trimmed;
+        return TrimToFit(read.Png != null ? read with { Text = null, Html = null, Rtf = null } : read, selection, log, context);
     }
 
     // a hash every host computes alike, for what crosses the wire
     public static ulong StableHash(string text) => XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(text));
 
     // what a clear writes, never crossing the contract: a write of Empty writes it, and the write takes it as Empty
-    private static readonly ClipboardContents Placeholder = new(ClipboardSnapshot.PlaceholderText, null, null, null, false);
+    private static readonly ClipboardContents Placeholder = new(PlaceholderText, null, null, null, false);
 
     // what a write of contents writes: the placeholder for a clear
     public static ClipboardContents Writing(ClipboardContents contents) => contents.IsEmpty ? Placeholder : contents;
 
     // the placeholder alone, which is never content
-    public static bool IsPlaceholder(ClipboardContents contents) => ClipboardSnapshot.IsPlaceholder(contents.Text, contents.Png, contents.Html, contents.Rtf);
+    public static bool IsPlaceholder(ClipboardContents contents) => contents is { Text: PlaceholderText, Png: null, Html: null, Rtf: null };
 
     // a write that replaced the clipboard: what it wrote, the placeholder taken as Empty, at the count it left
     public static ClipboardWrite.Written Written(ClipboardContents written, long? at) =>
@@ -124,48 +109,47 @@ public static class ClipboardUtils
         _ => c with { Png = null },
     };
 
-    // applies what it may and returns that, null for nothing: a selection alone, or beside the user's copied files,
-    // leaves the clipboard as it is, and a format the clipboard refused is not in it; written is told of the clipboard's
-    // write whenever there was one: the write, and what it took, the selection beside it, null when it did not replace the
-    // clipboard. The selection is set before the clipboard is written, as the emulated one always took it
-    public static ClipboardSnapshot? ApplyPreservingFiles(IClipboardPlatform platform, ClipboardSnapshot contents, ILogger log, string context,
-        Action<ClipboardWrite, ClipboardSnapshot?>? written = null)
+    // applies a peer's copy, the selection beside it set first, as the emulated one always took it: a selection alone, or
+    // beside the user's copied files, leaves the clipboard as it is, and a format the clipboard refused is not in it. A
+    // copy that is the placeholder alone is a clear
+    public static Applied? ApplyPreservingFiles(IClipboardPlatform platform, ClipboardSnapshot copy, ILogger log, string context)
     {
-        if (contents.IsEmpty) return null;
-        if (contents.IsSelectionOnly) return KeptSelection(platform, contents.PrimaryText);
+        if (copy.IsEmpty) return null;
+        if (copy.Clipboard.IsEmpty) return KeptSelection(platform, copy.Selection);
         if (platform.Clipboard.HoldsFiles())
         {
             if (log.IsEnabled(LogLevel.Information))
                 log.LogInformation("Clipboard {Context} skipped because the local clipboard contains files", context);
-            return KeptSelection(platform, contents.PrimaryText);
+            return KeptSelection(platform, copy.Selection);
         }
 
-        if (contents.PrimaryText is { } selection) platform.KeepSelection(selection);
-        var write = platform.Clipboard.Write(contents.Clipboard);
-        var wrote = write is ClipboardWrite.Written { Taken: var taken } ? Wrote(contents, taken) : null;
-        written?.Invoke(write, wrote);
-        // set again after a failed write, or one that took no format, since only the selection's write says whether this
-        // host could keep it; the placeholder written in place of a copy whose markers were refused is no copy applied
-        return wrote is { HasClipboard: true } && (!wrote.IsClear || contents.IsClear) ? wrote : KeptSelection(platform, contents.PrimaryText);
+        if (copy.Selection is { } selection) platform.KeepSelection(selection);
+        var clear = IsPlaceholder(copy.Clipboard);
+        var write = platform.Clipboard.Write(clear ? ClipboardContents.Empty : copy.Clipboard);
+        // the selection is set again after a failed write, or one that took no format, since only the selection's write
+        // says whether this host could keep it
+        if (write is not ClipboardWrite.Written written) return new Applied.Failed(write, KeptSelection(platform, copy.Selection));
+        if (clear) return new Applied.Emptied(written, copy);
+        // the placeholder written in place of a concealed copy whose markers were refused is no copy applied
+        if (copy.Clipboard.Secret && !written.Taken.Secret)
+            return new Applied.Emptied(written, ClipboardSnapshot.Empty with { Selection = KeptSelection(platform, copy.Selection)?.Text });
+        if (written.Taken.IsEmpty) return new Applied.Failed(written, KeptSelection(platform, copy.Selection));
+        return new Applied.Copy(written, copy.Selection);
     }
 
-    // what a write of asked took, as a snapshot with the selection asked beside it: the placeholder for a clear, and for
-    // a concealed copy whose markers were refused (taken without its secret)
-    internal static ClipboardSnapshot Wrote(ClipboardSnapshot asked, ClipboardContents taken) =>
-        asked.IsClear || (asked.Concealed && !taken.Secret)
-            ? ClipboardSnapshot.Placeholder with { PrimaryText = asked.PrimaryText }
-            : ClipboardSnapshot.Of(taken, asked.PrimaryText);
-
-    private static ClipboardSnapshot? KeptSelection(IClipboardPlatform platform, string? selection) =>
-        selection != null && platform.KeepSelection(selection) ? ClipboardSnapshot.SelectionOnly(selection) : null;
+    // the selection alone; none when not kept
+    public static Applied.SelectionAlone? KeptSelection(IClipboardPlatform platform, string? selection) =>
+        selection != null && platform.KeepSelection(selection) && selection.Length > 0 ? new Applied.SelectionAlone(selection) : null;
 
     // drop fields until the combined size fits. the selection goes first if that alone makes it fit, as the one thing
     // the user did not copy; then image, the rich reps (html, rtf), the selection, and LAST the universal plain text
     // (it's the Notepad-equivalent fallback).
-    public static ClipboardSnapshot TrimToFit(string? text, string? primaryText, byte[]? image, string? html, byte[]? rtf, ILogger log, string context)
+    public static ClipboardSnapshot TrimToFit(ClipboardContents contents, string? selection, ILogger log, string context)
     {
+        var (text, image, html, rtf) = (contents.Text, contents.Png, contents.Html, contents.Rtf);
         long textBytes = text != null ? Encoding.UTF8.GetByteCount(text) : 0;
-        long primaryBytes = primaryText != null && !ClipboardSnapshot.IsCopyOfText(primaryText, text) ? Encoding.UTF8.GetByteCount(primaryText) : 0;
+        // a selection repeating the text crosses once
+        long primaryBytes = selection != null && !(text != null && selection == text) ? Encoding.UTF8.GetByteCount(selection) : 0;
         long imageBytes = image?.Length ?? 0;
         long htmlBytes = html != null ? Encoding.UTF8.GetByteCount(html) : 0;
         long rtfBytes = rtf?.Length ?? 0;
@@ -181,24 +165,24 @@ public static class ClipboardUtils
             return true;
         }
 
-        if (Total() - primaryBytes <= MaxClipboardBytes && Drop("primary text", ref primaryBytes)) primaryText = null;
+        if (Total() - primaryBytes <= MaxClipboardBytes && Drop("primary text", ref primaryBytes)) selection = null;
         if (Drop("image", ref imageBytes)) image = null;
         if (Drop("html", ref htmlBytes)) html = null;
         if (Drop("rtf", ref rtfBytes)) rtf = null;
-        if (Drop("primary text", ref primaryBytes)) primaryText = null;
+        if (Drop("primary text", ref primaryBytes)) selection = null;
         // any primary left was a copy of the text, so it goes with it
-        if (Drop("text", ref textBytes)) { text = null; primaryText = null; }
-        return new ClipboardSnapshot(text, primaryText, image, html, rtf);
+        if (Drop("text", ref textBytes)) { text = null; selection = null; }
+        return new ClipboardSnapshot(new ClipboardContents(text, html, rtf, image, contents.Secret), selection);
     }
 
-    // xxhash64 of the clipboard's fields, to skip redundant syncs
-    public static ulong ClipboardHash(ClipboardSnapshot snap)
+    // xxhash64 of the clipboard's formats, to skip redundant syncs
+    public static ulong ClipboardHash(ClipboardContents contents)
     {
         var hash = new XxHash64();
-        Append(hash, snap.Text != null ? Encoding.UTF8.GetBytes(snap.Text) : []);
-        Append(hash, snap.ImagePng ?? []);
-        Append(hash, snap.Html != null ? Encoding.UTF8.GetBytes(snap.Html) : []);
-        Append(hash, snap.Rtf ?? []);
+        Append(hash, contents.Text != null ? Encoding.UTF8.GetBytes(contents.Text) : []);
+        Append(hash, contents.Png ?? []);
+        Append(hash, contents.Html != null ? Encoding.UTF8.GetBytes(contents.Html) : []);
+        Append(hash, contents.Rtf ?? []);
         return BitConverter.ToUInt64(hash.GetCurrentHash().AsSpan());
 
         static void Append(XxHash64 h, byte[] data)

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay;
 
@@ -62,7 +63,7 @@ public class ClipboardStreamSenderTests
             Assert.That(begin.Inner, Is.EqualTo(kind));
             Assert.That(begin.TotalBytes, Is.EqualTo(blob.Length));
             Assert.That(begin.BlobHash, Is.EqualTo(XxHash64.HashToUInt64(blob)));
-            Assert.That(begin.ContentHash, Is.EqualTo(ClipboardUtils.ClipboardHash(ClipboardWire.From(message, NullLogger.Instance, "test"))));
+            Assert.That(begin.ContentHash, Is.EqualTo(ClipboardWire.ContentHash(message, NullLogger.Instance, "test")));
         }
 
         var chunks = sends.Skip(1).Select(s => s.As<ClipboardStreamChunkMessage>()).ToList();
@@ -79,7 +80,7 @@ public class ClipboardStreamSenderTests
     [Test]
     public async Task AStreamedPush_CarriesTheHashOfItsSnapshot()
     {
-        var snapshot = new ClipboardSnapshot("caption", "selected", new byte[700_000], "<b>caption</b>");
+        var snapshot = Snapshot("caption", "selected", new byte[700_000], "<b>caption</b>");
 
         Send("a", ClipboardWire.ToPush(snapshot));
 

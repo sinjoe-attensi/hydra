@@ -7,6 +7,7 @@ using Hydra.Platform.Linux.Wayland;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
 using Tmds.DBus.Protocol;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -81,7 +82,7 @@ public class PortalClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(read?.Text, Is.EqualTo("copied"), "read, not unknown");
+            Assert.That(read?.Clipboard.Text, Is.EqualTo("copied"), "read, not unknown");
             Assert.That(_portal.ReadTypes, Is.EqualTo(["text/plain;charset=utf-8", "UTF8_STRING", "STRING"]));
         }
     }
@@ -171,8 +172,8 @@ public class PortalClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(read?.Text, Is.EqualTo("hunter2"));
-            Assert.That(read?.Concealed, Is.True);
+            Assert.That(read?.Clipboard.Text, Is.EqualTo("hunter2"));
+            Assert.That(read?.Clipboard.Secret, Is.True);
         }
     }
 
@@ -420,7 +421,7 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
         _portal.ReadTypes.Clear();
 
         using (Assert.EnterMultipleScope())
@@ -436,7 +437,7 @@ public class PortalClipboardSyncTests
     {
         _portal.ConfirmsWrites = true;
 
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -449,7 +450,7 @@ public class PortalClipboardSyncTests
     public void SameTextCopiedAgain_IsNoEcho()
     {
         _portal.ConfirmsWrites = true;
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
 
@@ -464,7 +465,7 @@ public class PortalClipboardSyncTests
     public void Write_OffersEveryFormatAtOnce()
     {
         var rtf = @"{\rtf1 written}"u8.ToArray();
-        var contents = new ClipboardSnapshot("written", "selected", Png, Html: "<b>written</b>", Rtf: rtf);
+        var contents = Snapshot("written", "selected", Png, Html: "<b>written</b>", Rtf: rtf);
 
         var written = _sync.SetClipboard(contents);
 
@@ -480,7 +481,7 @@ public class PortalClipboardSyncTests
     public void Transfer_IsAnsweredWithTheBytesOfThatFormat()
     {
         var rtf = @"{\rtf1 written}"u8.ToArray();
-        _sync.SetClipboard(new ClipboardSnapshot("wrïtten", null, Png, Html: "<b>written</b>", Rtf: rtf));
+        _sync.SetClipboard(Snapshot("wrïtten", null, Png, Html: "<b>written</b>", Rtf: rtf));
 
         using (Assert.EnterMultipleScope())
         {
@@ -496,7 +497,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void Transfer_OfAFormatNotOffered_Fails()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        _sync.SetClipboard(Snapshot("written", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -508,8 +509,8 @@ public class PortalClipboardSyncTests
     [Test]
     public void Transfer_ServesTheNewestWrite()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("first", null, null));
-        _sync.SetClipboard(new ClipboardSnapshot(null, null, Png));
+        _sync.SetClipboard(Snapshot("first", null, null));
+        _sync.SetClipboard(Snapshot(null, null, Png));
 
         using (Assert.EnterMultipleScope())
         {
@@ -521,7 +522,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void ConcealedWrite_OffersTheHint_AndServesSecret()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        _sync.SetClipboard(Snapshot("hunter2", null, null, Concealed: true));
 
         using (Assert.EnterMultipleScope())
         {
@@ -533,7 +534,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void PlainWrite_OffersNoHint()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("plain", null, null));
+        _sync.SetClipboard(Snapshot("plain", null, null));
 
         Assert.That(_portal.Offers[^1], Does.Not.Contain("x-kde-passwordManagerHint"));
     }
@@ -541,7 +542,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void ConcealedWrite_ReadsAsConcealedInAnotherClient()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        _sync.SetClipboard(Snapshot("hunter2", null, null, Concealed: true));
         var other = new FakePortalClipboard();
         var otherSync = Create(other);
 
@@ -565,14 +566,14 @@ public class PortalClipboardSyncTests
     [Test]
     public void Clear_OffersThePlaceholderWithTheHint()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("hunter2", "selected", Png, Concealed: true));
+        _sync.SetClipboard(Snapshot("hunter2", "selected", Png, Concealed: true));
 
         var cleared = _sync.Cleared();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_portal.Offers[^1], Is.EquivalentTo(PlaceholderFormats));
-            Assert.That(_portal.Transfer("text/plain", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardSnapshot.PlaceholderText)));
+            Assert.That(_portal.Transfer("text/plain", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardUtils.PlaceholderText)));
             Assert.That(_portal.Transfer("image/png", 2), Is.Null);
             Assert.That(_sync.StillHolds(cleared), Is.True);
             Assert.That(_sync.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
@@ -588,7 +589,7 @@ public class PortalClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_sync.SetClipboard(new ClipboardSnapshot("written", null, null)), Is.Null);
+            Assert.That(_sync.SetClipboard(Snapshot("written", null, null)), Is.Null);
             Assert.That(_sync.Count(), Is.EqualTo(before));
             Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied"));
@@ -600,7 +601,7 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        ClipboardUtils.ApplyPreservingFiles(_sync, new ClipboardSnapshot(null, "selected", null), NullLogger.Instance, "test");
+        ClipboardUtils.ApplyPreservingFiles(_sync, Snapshot(null, "selected", null), NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -617,7 +618,7 @@ public class PortalClipboardSyncTests
     {
         _portal.ConfirmsWrites = true;
         var start = _sync.Count();
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        _sync.SetClipboard(Snapshot("written", null, null));
         var afterWrite = _sync.Count();
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
         var afterCopy = _sync.Count();
@@ -669,7 +670,7 @@ public class PortalClipboardSyncTests
     public void WrittenAt_IsTheVersionRightAfterTheWrite_AndAForeignCopyMovesPastIt()
     {
         _portal.ConfirmsWrites = true;
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
         var afterWrite = _sync.Count();
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
@@ -684,7 +685,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void WrittenAt_OfAClear_IsTheVersionAfterIt()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        _sync.SetClipboard(Snapshot("written", null, null));
 
         Assert.That(_sync.Cleared().Count(), Is.EqualTo(_sync.Count()));
     }
@@ -701,7 +702,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void OwnerChange_BeforeTheWriteIsConfirmed_IsOlderThanIt()
     {
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "older"u8.ToArray() });
         _portal.ConfirmOwnWrite();
@@ -717,7 +718,7 @@ public class PortalClipboardSyncTests
     [Test]
     public void OwnerChange_ToAWriteNeverConfirmed_CountsOnceTheWaitIsOver()
     {
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
         _time.Advance(TimeSpan.FromSeconds(2));
@@ -734,7 +735,7 @@ public class PortalClipboardSyncTests
     public void OwnerChange_AfterTheWriteIsConfirmed_CountsAtOnce()
     {
         _portal.ConfirmsWrites = true;
-        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(Snapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
@@ -747,7 +748,7 @@ public class PortalClipboardSyncTests
     public void Selection_IsKeptHere_BesideAWrite()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", "relayed selection", null));
+        _sync.SetClipboard(Snapshot("written", "relayed selection", null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -760,7 +761,7 @@ public class PortalClipboardSyncTests
     public void TextCopyAfterwards_IsThePrimary()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", "relayed selection", null));
+        _sync.SetClipboard(Snapshot("written", "relayed selection", null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
@@ -771,7 +772,7 @@ public class PortalClipboardSyncTests
     public void ImageCopyAfterwards_LeavesTheRelayedSelection()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", "relayed selection", null));
+        _sync.SetClipboard(Snapshot("written", "relayed selection", null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "beside the image"u8.ToArray(), ["image/png"] = Png });
 
@@ -782,7 +783,7 @@ public class PortalClipboardSyncTests
     public void ConcealedCopyAfterwards_LeavesTheRelayedSelection()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", "relayed selection", null));
+        _sync.SetClipboard(Snapshot("written", "relayed selection", null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "hunter2"u8.ToArray(), ["x-kde-passwordManagerHint"] = "secret"u8.ToArray() });
 
@@ -1059,7 +1060,7 @@ public class PortalClipboardSyncTests
         try
         {
             Assert.That(sync.Connected(), Is.True);
-            var written = sync.Written(new ClipboardSnapshot("written", "selected", null));
+            var written = sync.Written(Snapshot("written", "selected", null));
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(written.Taken.Text, Is.EqualTo("written"));
@@ -1096,7 +1097,7 @@ public class PortalClipboardSyncTests
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
-                Assert.That(sync.SetClipboard(new ClipboardSnapshot("written", null, null)), Is.Null);
+                Assert.That(sync.SetClipboard(Snapshot("written", null, null)), Is.Null);
                 Assert.That(sync.ClearClipboard(), Is.False);
                 Assert.That(sync.Count(), Is.Null);
                 Assert.That(sync.ReadPrimary().TextOrNone(), Is.Null);
@@ -1272,7 +1273,7 @@ public class PortalClipboardSyncTests
         ClaimThenRelease();
         var count = _sync.Count();
 
-        var written = _sync.Written(new ClipboardSnapshot("from the slave", null, null));
+        var written = _sync.Written(Snapshot("from the slave", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1293,7 +1294,7 @@ public class PortalClipboardSyncTests
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray(), ["image/png"] = Png });
         ClaimThenRelease();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, [9, 9]));
+        var written = _sync.SetClipboard(Snapshot("from the slave", null, [9, 9]));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1310,7 +1311,7 @@ public class PortalClipboardSyncTests
         ClaimThenRelease();
         var count = _sync.Count();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("from the browser", null, null, Html: "<b>from the browser</b>"));
+        var written = _sync.SetClipboard(Snapshot("from the browser", null, null, Html: "<b>from the browser</b>"));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1334,7 +1335,7 @@ public class PortalClipboardSyncTests
         });
         ClaimThenRelease();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("a < b & \"c\" {d}\\é\n😀", null, null));
+        var written = _sync.SetClipboard(Snapshot("a < b & \"c\" {d}\\é\n😀", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1354,7 +1355,7 @@ public class PortalClipboardSyncTests
         ClaimThenRelease();
         var count = _sync.Count();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null));
+        var written = _sync.SetClipboard(Snapshot("from the slave", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1371,7 +1372,7 @@ public class PortalClipboardSyncTests
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot(null, null, Png));
+        var written = _sync.SetClipboard(Snapshot(null, null, Png));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1386,7 +1387,7 @@ public class PortalClipboardSyncTests
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray(), ["text/uri-list"] = "file:///tmp/a\r\n"u8.ToArray() });
         ClaimThenRelease();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null));
+        var written = _sync.SetClipboard(Snapshot("from the slave", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1411,7 +1412,7 @@ public class PortalClipboardSyncTests
             Assert.That(await _time.Started.Next("the transfer's wait for the pull"), Is.EqualTo(PortalClipboardSync.TransferWait));
             Assert.That(pasted.IsCompleted, Is.False);
         }
-        _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null));
+        _sync.SetClipboard(Snapshot("from the slave", null, null));
         settled.SetResult();
 
         Assert.That(await pasted.WaitAsync(Bound), Is.EqualTo("from the slave"u8.ToArray()));
@@ -1528,7 +1529,7 @@ public class PortalClipboardSyncTests
 
         var claim = Task.Run(_sync.Claim);
         await reading.Task.WaitAsync(Bound);
-        var written = await Task.Run(() => _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, Png))).WaitAsync(Bound);
+        var written = await Task.Run(() => _sync.SetClipboard(Snapshot("from the slave", null, Png))).WaitAsync(Bound);
         release.Set();
         await claim.WaitAsync(Bound);
 
@@ -1552,7 +1553,7 @@ public class PortalClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Count(), Is.EqualTo(count + 1), "a write of Hydra's");
-            Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardSnapshot.PlaceholderText)));
+            Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardUtils.PlaceholderText)));
             Assert.That(_portal.Transfer("x-kde-passwordManagerHint", 2), Is.Null, "never offered");
             Assert.That(_sync.Read().AsContents(), Is.SameAs(ClipboardContents.Empty), "Hydra's own write reads as nothing");
             Assert.That(_sync.StillHolds(cleared), Is.True);
@@ -1565,7 +1566,7 @@ public class PortalClipboardSyncTests
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
 
-        Assert.That(_sync.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true)), Is.Null);
+        Assert.That(_sync.SetClipboard(Snapshot("hunter2", null, null, Concealed: true)), Is.Null);
     }
 
     [Test]
@@ -1583,7 +1584,7 @@ public class PortalClipboardSyncTests
             Assert.That(_sync.Count(), Is.EqualTo(count + 1));
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied again"));
             Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
-            Assert.That(_sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null)), Is.Null,
+            Assert.That(_sync.SetClipboard(Snapshot("from the slave", null, null)), Is.Null,
                 "the session no longer holds the selection, and the portal sets none without the capture");
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.Null);
         }
@@ -1619,7 +1620,7 @@ public class PortalClipboardSyncTests
         {
             sync.Connected();
             sync.Count();
-            sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+            sync.SetClipboard(Snapshot("written", null, null));
 
             Assert.That(asked, Is.EqualTo(1));
         }
@@ -1639,7 +1640,7 @@ public class PortalClipboardSyncTests
         var sync = new PortalClipboardSync(_ => Task.FromResult(portals.Dequeue()), () => new NullClipboardSync(), _time, NullLogger.Instance);
         try
         {
-            var written = sync.Written(new ClipboardSnapshot("written", null, null));
+            var written = sync.Written(Snapshot("written", null, null));
 
             sync.OnSessionLost();
 

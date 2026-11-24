@@ -4,6 +4,7 @@ using Hydra.Relay;
 using Tests.Setup;
 using Hydra.Platform.MacOs;
 using Microsoft.Extensions.Logging.Abstractions;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Platform;
 
@@ -99,7 +100,7 @@ public class MacClipboardSyncTests : EmulatedPrimarySelectionContract
     [Test]
     public void SetClipboard_Concealed_WritesBothMarkers()
     {
-        var written = Taken(Write(new ClipboardSnapshot("secret", null, null, Concealed: true)));
+        var written = Taken(Write(Snapshot("secret", null, null, Concealed: true)));
 
         var types = Types();
         using (Assert.EnterMultipleScope())

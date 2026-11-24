@@ -4,6 +4,7 @@ using Hydra.Platform;
 using Hydra.Relay;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay;
 
@@ -409,7 +410,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
 
         var hashes = relay.Sent.Of<ClipboardHashMessage>(MessageKind.ClipboardHash);
         Assert.That(hashes, Has.Count.EqualTo(1));
-        var expected = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("master content", null, null));
+        var expected = ClipboardUtils.ClipboardHash(Snapshot("master content", null, null).Clipboard);
         Assert.That(hashes[0].Hash, Is.EqualTo(expected));
     }
 
@@ -434,7 +435,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetupText("identical content");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var matchingHash = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("identical content", null, null));
+        var matchingHash = ClipboardUtils.ClipboardHash(Snapshot("identical content", null, null).Clipboard);
         var hashMsg = new ClipboardHashMessage(matchingHash);
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, hashMsg.ToSaneJson());
 
@@ -481,7 +482,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetupText("identical content");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var hashMsg = ClipboardWire.ToHash(new ClipboardSnapshot("identical content", "master selection", null));
+        var hashMsg = ClipboardWire.ToHash(Snapshot("identical content", "master selection", null));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, hashMsg.ToSaneJson());
 
         using (Assert.EnterMultipleScope())
@@ -499,7 +500,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetupText("copied on the master");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var hashMsg = ClipboardWire.ToHash(new ClipboardSnapshot("copied on the master", "copied on the master", null));
+        var hashMsg = ClipboardWire.ToHash(Snapshot("copied on the master", "copied on the master", null));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, hashMsg.ToSaneJson());
 
         Assert.That(clipboard.PrimaryText, Is.EqualTo("copied on the master"));
@@ -529,7 +530,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetupText("same text");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var slaveHash = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("same text", null, null));
+        var slaveHash = ClipboardUtils.ClipboardHash(Snapshot("same text", null, null).Clipboard);
         var pull = new ClipboardPullMessage(1, slaveHash); // master sends slave's own hash
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPull, pull.ToSaneJson());
 
@@ -545,7 +546,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetPrimaryText("slave selection");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var pull = new ClipboardPullMessage(1, ClipboardUtils.ClipboardHash(new ClipboardSnapshot("same text", null, null)));
+        var pull = new ClipboardPullMessage(1, ClipboardUtils.ClipboardHash(Snapshot("same text", null, null).Clipboard));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPull, pull.ToSaneJson());
 
         var msg = slave.Sent.Of<ClipboardPullResponseMessage>(MessageKind.ClipboardPullResponse).Single();
@@ -683,7 +684,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetupText("identical content");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var hashMsg = ClipboardWire.ToHash(new ClipboardSnapshot("identical content", new string('s', 5000), null));
+        var hashMsg = ClipboardWire.ToHash(Snapshot("identical content", new string('s', 5000), null));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, hashMsg.ToSaneJson());
 
         using (Assert.EnterMultipleScope())
@@ -700,7 +701,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         var clipboard = new FakeClipboardSync();
         clipboard.SetupText("identical content");
         var slave = new TestableSlaveRelay(clipboard: clipboard);
-        var master = new ClipboardSnapshot("identical content", new string('s', 5000), null);
+        var master = Snapshot("identical content", new string('s', 5000), null);
 
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, ClipboardWire.ToHash(master).ToSaneJson());
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPush, ClipboardWire.ToPush(master).ToSaneJson());
@@ -708,7 +709,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         using (Assert.EnterMultipleScope())
         {
             Assert.That(clipboard.SetClipboardCallCount, Is.Zero);
-            Assert.That(clipboard.PrimaryText, Is.EqualTo(master.PrimaryText));
+            Assert.That(clipboard.PrimaryText, Is.EqualTo(master.Selection));
         }
     }
 
@@ -721,7 +722,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetPrimaryText(selection);
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var pull = ClipboardWire.ToPull(ClipboardBaseline.Of(new ClipboardSnapshot("same text", null, null)), 1);
+        var pull = ClipboardWire.ToPull(ClipboardBaseline.Of(Snapshot("same text", null, null)), 1);
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPull, pull.ToSaneJson());
 
         var msg = slave.Sent.Of<ClipboardPullResponseMessage>(MessageKind.ClipboardPullResponse).Single();
@@ -741,7 +742,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
         clipboard.SetPrimaryText(new string('s', 5000));
         var slave = new TestableSlaveRelay(clipboard: clipboard);
 
-        var pull = ClipboardWire.ToPull(ClipboardBaseline.Of(new ClipboardSnapshot("same text", new string('s', 5000), null)), 1);
+        var pull = ClipboardWire.ToPull(ClipboardBaseline.Of(Snapshot("same text", new string('s', 5000), null)), 1);
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPull, pull.ToSaneJson());
 
         var msg = slave.Sent.Of<ClipboardPullResponseMessage>(MessageKind.ClipboardPullResponse).Single();
@@ -760,9 +761,9 @@ public class ClipboardSyncTests : MasterClipboardFixture
         var slave = new TestableSlaveRelay(clipboard: clipboard);
         var selection = new string('s', 5000);
 
-        var checkedWith = ClipboardWire.ToHash(new ClipboardSnapshot("identical content", selection, null));
+        var checkedWith = ClipboardWire.ToHash(Snapshot("identical content", selection, null));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardHash, checkedWith.ToSaneJson());
-        var pushed = ClipboardWire.ToPush(new ClipboardSnapshot("copied on the master since", selection, null));
+        var pushed = ClipboardWire.ToPush(Snapshot("copied on the master since", selection, null));
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPush, pushed.ToSaneJson());
 
         using (Assert.EnterMultipleScope())

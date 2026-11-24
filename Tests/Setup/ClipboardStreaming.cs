@@ -4,6 +4,7 @@ using Cathedral.Extensions;
 using Hydra.Platform;
 using Hydra.Relay;
 using Microsoft.Extensions.Logging.Abstractions;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Setup;
 
@@ -29,13 +30,13 @@ public static class ClipboardStreaming
         return image;
     }
 
-    public static ulong TextHash(string text) => ClipboardUtils.ClipboardHash(new ClipboardSnapshot(text, null, null));
+    public static ulong TextHash(string text) => ClipboardUtils.ClipboardHash(Snapshot(text, null, null).Clipboard);
 
-    public static ulong ImageHash(byte[] image) => ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image));
+    public static ulong ImageHash(byte[] image) => ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard);
 
     // the hash of the whole clipboard a push or pull answer carries, as its receiver takes it
     public static ulong CarriedHash(IClipboardPayload message) =>
-        ClipboardUtils.ClipboardHash(ClipboardWire.From(message, NullLogger.Instance, "a test stream"));
+        ClipboardWire.ContentHash(message, NullLogger.Instance, "a test stream");
 
     // how many chunks a blob streams in
     public static int ChunkCount(long bytes) => (int)((bytes + ClipboardStreamSender.ChunkBytes - 1) / ClipboardStreamSender.ChunkBytes);

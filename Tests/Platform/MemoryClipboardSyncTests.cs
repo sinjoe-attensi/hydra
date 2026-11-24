@@ -20,7 +20,7 @@ public class MemoryClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(cleared, Is.InstanceOf<ClipboardWrite.Written>());
-            Assert.That(ClipboardUtils.ReadWithFallback(clipboard, null, ClipboardChanges.Of(clipboard.Clipboard).Last, NullLogger.Instance, "test")?.HasClipboard, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(clipboard, null, ClipboardChanges.Of(clipboard.Clipboard).Last, NullLogger.Instance, "test")?.Clipboard.IsEmpty, Is.True);
             Assert.That(clipboard.ReadSelection().TextOrNone(), Is.EqualTo("selected"));
             Assert.That(clipboard.Clipboard.Count(), Is.EqualTo(afterCopy + 1));
         }

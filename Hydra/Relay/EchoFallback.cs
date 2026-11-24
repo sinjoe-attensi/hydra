@@ -8,7 +8,7 @@ namespace Hydra.Relay;
 public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
 {
     private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
-    private ClipboardSnapshot? _last;
+    private ClipboardContents? _last;
 
     // the clipboard, or null when it could not be read, which is unknown, never empty
     public ClipboardSnapshot? Read(string context) =>
@@ -17,12 +17,8 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
     // what a peer's clipboard is compared against; null when the clipboard could not be read
     public ClipboardBaseline? Baseline(string context) => Read(context) is { } read ? ClipboardBaseline.Of(read) : null;
 
-    // what was applied from a peer, as the clipboard took it: a selection alone leaves the clipboard, and so the
-    // fallback, as it was
-    public void Remember(ClipboardSnapshot? applied)
-    {
-        if (applied is { IsSelectionOnly: false }) Volatile.Write(ref _last, applied);
-    }
+    // a peer's copy written here, as the clipboard took it
+    public void Remember(ClipboardContents taken) => Volatile.Write(ref _last, taken);
 
     // the clipboard was emptied another way, as by the placeholder written in place of a refused concealed copy
     public void Forget() => Volatile.Write(ref _last, null);

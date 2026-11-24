@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay.Edge;
 
@@ -124,14 +125,14 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         var html = new string('h', 1024);
         var rtf = new byte[1024];
 
-        var trimmed = ClipboardUtils.TrimToFit(text, null, new byte[Cap], html, rtf, NullLogger.Instance, "test");
+        var trimmed = ClipboardUtils.TrimToFit(new ClipboardContents(text, html, rtf, new byte[Cap], false), null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(trimmed.ImagePng, Is.Null);
-            Assert.That(trimmed.Text, Is.EqualTo(text));
-            Assert.That(trimmed.Html, Is.EqualTo(html));
-            Assert.That(trimmed.Rtf, Is.EqualTo(rtf));
+            Assert.That(trimmed.Clipboard.Png, Is.Null);
+            Assert.That(trimmed.Clipboard.Text, Is.EqualTo(text));
+            Assert.That(trimmed.Clipboard.Html, Is.EqualTo(html));
+            Assert.That(trimmed.Clipboard.Rtf, Is.EqualTo(rtf));
             Assert.That(Bytes(trimmed), Is.LessThanOrEqualTo(Cap));
         }
     }
@@ -143,13 +144,13 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         var html = new string('h', 100);
         var rtf = new byte[5];
 
-        var trimmed = ClipboardUtils.TrimToFit(text, null, null, html, rtf, NullLogger.Instance, "test");
+        var trimmed = ClipboardUtils.TrimToFit(new ClipboardContents(text, html, rtf, null, false), null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(trimmed.Html, Is.Null, "html goes first");
-            Assert.That(trimmed.Rtf, Is.EqualTo(rtf), "rtf kept, since dropping html made it fit");
-            Assert.That(trimmed.Text, Is.EqualTo(text));
+            Assert.That(trimmed.Clipboard.Html, Is.Null, "html goes first");
+            Assert.That(trimmed.Clipboard.Rtf, Is.EqualTo(rtf), "rtf kept, since dropping html made it fit");
+            Assert.That(trimmed.Clipboard.Text, Is.EqualTo(text));
             Assert.That(Bytes(trimmed), Is.LessThanOrEqualTo(Cap));
         }
     }
@@ -157,7 +158,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
     [Test]
     public void OverTheCap_TrimToFit_DropsThePlainTextLast()
     {
-        var trimmed = ClipboardUtils.TrimToFit(new string('t', (int)Cap + 1), null, null, null, null, NullLogger.Instance, "test");
+        var trimmed = ClipboardUtils.TrimToFit(new ClipboardContents(new string('t', (int)Cap + 1), null, null, null, false), null, NullLogger.Instance, "test");
 
         Assert.That(trimmed.IsEmpty, Is.True);
     }
@@ -169,7 +170,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         var text = new string('t', (int)Cap - 5);
         var rtf = new byte[] { 1, 2, 3, 4, 5 };
         // one byte over the cap, which the html alone takes it to
-        master.SetClipboard(new ClipboardSnapshot(text, null, null, "h", rtf));
+        master.SetClipboard(Snapshot(text, null, null, "h", rtf));
         var slave = new FakeClipboardSync();
         slave.SetupText("old on the slave");
 
@@ -180,8 +181,8 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
             Assert.That(slave.Text, Is.EqualTo(text));
             Assert.That(slave.Html, Is.Null, "dropped on the master, before sending");
             Assert.That(slave.Rtf, Is.EqualTo(rtf));
-            Assert.That(Bytes(new ClipboardSnapshot(slave.Text, null, slave.ImagePng, slave.Html, slave.Rtf)), Is.LessThanOrEqualTo(Cap));
-            Assert.That(begin.ContentHash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(text, null, null, null, rtf))));
+            Assert.That(Bytes(Snapshot(slave.Text, null, slave.ImagePng, slave.Html, slave.Rtf)), Is.LessThanOrEqualTo(Cap));
+            Assert.That(begin.ContentHash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(text, null, null, null, rtf).Clipboard)));
         }
     }
 
@@ -249,7 +250,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
     public async Task TextHtmlAndRtfOverTheThreshold_AllLandIntact_UnderTheHandshakesHash()
     {
         var master = new FakeClipboardSync();
-        var snapshot = new ClipboardSnapshot(JustOverText('t'), null, null, "<p>" + JustOverText('h') + "</p>",
+        var snapshot = Snapshot(JustOverText('t'), null, null, "<p>" + JustOverText('h') + "</p>",
             Encoding.ASCII.GetBytes(@"{\rtf1 " + JustOverText('r') + "}"));
         master.SetClipboard(snapshot);
         var slave = new FakeClipboardSync();
@@ -259,9 +260,9 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(slave.Text, Is.EqualTo(snapshot.Text));
-            Assert.That(slave.Html, Is.EqualTo(snapshot.Html));
-            Assert.That(slave.Rtf, Is.EqualTo(snapshot.Rtf));
+            Assert.That(slave.Text, Is.EqualTo(snapshot.Clipboard.Text));
+            Assert.That(slave.Html, Is.EqualTo(snapshot.Clipboard.Html));
+            Assert.That(slave.Rtf, Is.EqualTo(snapshot.Clipboard.Rtf));
             Assert.That(slave.ImagePng, Is.Null);
             Assert.That(begin.ContentHash, Is.EqualTo(offered.Hash));
             Assert.That(begin.ContentHash, Is.EqualTo(ClipboardWire.ToHash(snapshot).Hash));
@@ -318,7 +319,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         clipboard.Select("old selection on the slave");
         var slave = Slave(clipboard);
         var text = JustOverText('s');
-        var copied = new ClipboardSnapshot(text, "selected when copied", null);
+        var copied = Snapshot(text, "selected when copied", null);
         var push = ClipboardWire.ToPush(copied);
         var stream = StreamedPush(3, push, ClipboardWire.ToHash(copied).Hash!.Value);
         var newer = newerIsTheText ? text : "selected since, on the master";
@@ -326,7 +327,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         await slave.SimulateReceive(Master, MessageKind.ClipboardStreamBegin, stream.Begin.ToSaneJson());
         await slave.SimulateReceive(Master, MessageKind.ClipboardStreamChunk, stream.Chunks[0].ToSaneJson());
         // the master's clipboard unchanged, its selection moved on: it travels inline beside the same hash
-        var moved = ClipboardWire.ToHash(copied with { PrimaryText = newer });
+        var moved = ClipboardWire.ToHash(copied with { Selection = newer });
         Assert.That(moved.PrimaryHash, Is.Null, "pre-condition: the selection travels inline");
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, moved.ToSaneJson());
         var midStream = clipboard.Primary;
@@ -364,7 +365,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         }
 
         // the master's copy lands and its real hash follows, the selection still beside it
-        var landed = new ClipboardSnapshot("landed on the master", selection, null);
+        var landed = Snapshot("landed on the master", selection, null);
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, ClipboardWire.ToHash(landed).ToSaneJson());
         Assert.That(slave.Sent.Of(MessageKind.ClipboardPullRequest), Has.Count.EqualTo(1));
         await slave.SimulateReceive(Master, MessageKind.ClipboardPush, ClipboardWire.ToPush(landed).ToSaneJson());
@@ -583,8 +584,8 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
 
     // the bytes TrimToFit counts against the cap
     private static long Bytes(ClipboardSnapshot s) =>
-        (s.Text == null ? 0 : Encoding.UTF8.GetByteCount(s.Text)) + (s.ImagePng?.Length ?? 0) + (s.Html == null ? 0 : Encoding.UTF8.GetByteCount(s.Html))
-        + (s.Rtf?.Length ?? 0) + (s.PrimaryText == null || s.SelectionIsText ? 0 : Encoding.UTF8.GetByteCount(s.PrimaryText));
+        (s.Clipboard.Text == null ? 0 : Encoding.UTF8.GetByteCount(s.Clipboard.Text)) + (s.Clipboard.Png?.Length ?? 0) + (s.Clipboard.Html == null ? 0 : Encoding.UTF8.GetByteCount(s.Clipboard.Html))
+        + (s.Clipboard.Rtf?.Length ?? 0) + (s.Selection == null || s.Selection == s.Clipboard.Text ? 0 : Encoding.UTF8.GetByteCount(s.Selection));
 
     // a chunk over the stream threshold, so it streams in several chunks
     private static string JustOverText(char fill) => new(fill, ClipboardStreamSender.Threshold + ChunkBytes);

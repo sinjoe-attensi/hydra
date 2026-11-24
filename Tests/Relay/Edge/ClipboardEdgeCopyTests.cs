@@ -4,6 +4,7 @@ using Hydra.Relay;
 using Microsoft.Extensions.Time.Testing;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay.Edge;
 
@@ -142,7 +143,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         clipboard.SetupText("copied on C");
         // A's copy lands on the master, which offers it to C
         var fromA = BigImage(2);
-        var landed = ClipboardWire.ToHash(new ClipboardSnapshot(null, null, fromA));
+        var landed = ClipboardWire.ToHash(Snapshot(null, null, fromA));
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, landed.ToSaneJson());
         await PushIfRequested(slave, new ClipboardPushMessage("", ImagePng: fromA));
         await slave.SimulateReceive(Master, MessageKind.ClipboardPull, new ClipboardPullMessage(9, landed.Hash).ToSaneJson());
@@ -229,7 +230,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         slave.Reliable.Release();
         await SentAnswer(slave, begins: 1);
         // the cursor is back on A when the older answer lands, so the master offers it to A, and pulls on leaving
-        var landed = ClipboardWire.ToHash(new ClipboardSnapshot(null, null, older));
+        var landed = ClipboardWire.ToHash(Snapshot(null, null, older));
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, landed.ToSaneJson());
         await PushIfRequested(slave, new ClipboardPushMessage("", ImagePng: older));
         await Pull(slave, 2, landed.Hash);

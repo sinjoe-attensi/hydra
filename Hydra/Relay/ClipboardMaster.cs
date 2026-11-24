@@ -8,7 +8,7 @@ namespace Hydra.Relay;
 // host, and the pull whose answer is streaming in
 public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
 {
-    private static readonly ulong EmptyHash = ClipboardUtils.ClipboardHash(ClipboardSnapshot.Empty);
+    private static readonly ulong EmptyHash = ClipboardUtils.ClipboardHash(ClipboardContents.Empty);
 
     private readonly EchoFallback _echo = new(platform, log);
     private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
@@ -57,7 +57,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             {
                 var settled = read.Version == _version;
                 if (read.Clip is not { } clip) hash = null;
-                else if (!clip.HasClipboard && _concealed) hash = ClipboardWire.ToHash(clip) with { Cleared = true };
+                else if (clip.Clipboard.IsEmpty && _concealed) hash = ClipboardWire.ToHash(clip) with { Cleared = true };
                 else hash = clip.IsEmpty ? null : ClipboardWire.ToHash(clip);
                 if (hash != null && host != null) hash = hash with { ResendFrom = ResendFromLocked(host, now) };
                 if (settled) break;
@@ -71,7 +71,10 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
 
     // empties the clipboard, which stays Hydra's own write, so a read finds nothing rather than the last fallback; whether
     // it did. cleared: a password manager cleared the concealed copy it held, which the slaves are told on entry
-    public bool Empty(bool cleared = false)
+    public bool Empty(bool cleared = false) => Clear(cleared) != null;
+
+    // Empty: the clear, where it replaced the clipboard
+    private ClipboardWrite.Written? Clear(bool cleared)
     {
         var emptied = _changes.Write(_echo.Empty);
         lock (_lock)
@@ -79,7 +82,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             _version++;
             _known = ClipboardBaseline.Of(ClipboardSnapshot.Empty);
             _concealed = cleared;
-            if (emptied) _wrote = EmptyHash;
+            if (emptied != null) _wrote = EmptyHash;
         }
         return emptied;
     }
@@ -452,7 +455,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         // takes milliseconds) so the hold is decided and set at once
         ulong? content = null;
         if (answer.Unchanged != true && IsOlderThanLatest(host, answer.PullId))
-            content = ClipboardUtils.ClipboardHash(ClipboardWire.From(answer, log, $"pull response from {host}"));
+            content = ClipboardWire.ContentHash(answer, log, $"pull response from {host}");
         var now = _changes.Now();
         lock (_lock)
         {
@@ -507,7 +510,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             // the newer pull found nothing newer than the held stream, which now lands as its own pull's answer, with
             // the newer selection
             pull = held.Pull;
-            answer = held.Answer with { PrimaryText = answer.PrimaryText, PrimaryIsText = answer.PrimaryIsText };
+            answer = ClipboardWire.WithSelection(held.Answer, answer);
         }
         // a selection alone never overwrites a copy, so only a changed clipboard loses to one made here since
         if (answer.Unchanged != true && CopiedSince(pull))
@@ -522,69 +525,73 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     // writes host's answer to pull, superseding the older pulls when it changed the clipboard; gone: those it already did
     private PullAnswer Apply(string host, PendingPull pull, ClipboardPullResponseMessage answer, List<OutstandingPull> gone)
     {
-        var cleared = answer.Cleared == true && ClearConcealed(host);
-        var write = new AppliedWrite();
-        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host, write), _ => write.Written);
+        var cleared = answer.Cleared == true ? ClearConcealed(host) : null;
+        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host), a => a?.Written);
         // the placeholder in place of a concealed copy whose markers were refused is an empty clipboard, Hydra's own
-        var refused = write.MarkersRefused;
-        if (refused) _echo.Forget();
-        else _echo.Remember(applied);
-        var wrote = applied is { HasClipboard: true } && !cleared;
+        if (applied is Applied.Emptied) _echo.Forget();
+        else if (applied is Applied.Copy written) _echo.Remember(written.Write.Taken);
+        var failed = applied is Applied.Failed;
+        // what it applied after all: a failed write leaves only the selection set after it
+        var offered = applied is Applied.Failed { Kept: var kept } ? kept : applied;
         var now = _changes.Now();
         lock (_lock)
         {
             // an answer from host not taken still stands beside this one when this answers an older pull (a held one)
             var standing = Standing(host, now);
-            if (refused)
+            if (offered != null) _version++;
+            switch (offered)
             {
-                _version++;
-                _known = ClipboardBaseline.Of(applied ?? ClipboardSnapshot.Empty);
-                _concealed = false;
-                _wrote = EmptyHash;
-            }
-            else if (applied != null)
-            {
-                _version++;
-                _known = applied.IsSelectionOnly ? _known with { PrimaryText = applied.PrimaryText } : ClipboardBaseline.Of(applied);
-            }
-            if (wrote)
-            {
-                _concealed = applied!.Concealed;
-                _wrote = ClipboardUtils.ClipboardHash(applied);
+                case Applied.Emptied emptied:
+                    _known = ClipboardBaseline.Of(emptied.Known);
+                    _concealed = false;
+                    // a clear asked for is Hydra's write of what the peer sent, unless the clear of its concealed copy came first
+                    _wrote = cleared == null ? ClipboardUtils.ClipboardHash(emptied.Known.Clipboard) : EmptyHash;
+                    break;
+                case Applied.SelectionAlone alone:
+                    _known = _known with { Selection = alone.Text };
+                    break;
+                case Applied.Copy copy:
+                    _known = ClipboardBaseline.Of(new ClipboardSnapshot(copy.Write.Taken, copy.Selection));
+                    if (cleared != null) break;
+                    _concealed = copy.Write.Taken.Secret;
+                    _wrote = ClipboardUtils.ClipboardHash(copy.Write.Taken);
+                    break;
             }
             // a changed answer written is taken, and with it every answer from host before it; one that could not be is
             // not, so the next pull asks again. What this host sent stands on, as of the clipboard it left here
-            if (write.Failed && !refused && answer.Unchanged != true) NotTaken(pull, now);
+            if (failed && answer.Unchanged != true) NotTaken(pull, now);
             else if (standing != null && (answer.Unchanged == true || standing.From > pull.Ref.Id))
                 _untaken[host] = standing with { Known = _known.Hash };
             else _untaken.Remove(host);
         }
-        if (refused)
+        if (applied is Applied.Emptied)
         {
             log.LogWarning("Clipboard pull response from {Host}: the clipboard refused its concealed markers, so it was not written; the clipboard stays empty",
                 host);
-            return new PullAnswer(true, ClipboardSnapshot.Placeholder, [.. gone, .. Supersede(pull.Ref, answer.Resends)], Failed: true);
+            return new PullAnswer(true, applied, [.. gone, .. Supersede(pull.Ref, answer.Resends)], Failed: true);
         }
-        if (write.Failed)
+        if (failed)
             log.LogWarning("Clipboard pull response from {Host}: it could not be written; the clipboard stays as it was", host);
         // the clear is the newer state: it supersedes the older pulls and aborts the pushes of the old copy, as a copy does
-        if (cleared) return new PullAnswer(true, ClipboardSnapshot.Placeholder, [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
+        if (cleared != null)
+            return new PullAnswer(true, new Applied.Emptied(cleared, ClipboardSnapshot.Empty), [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
         // a changed answer that could not be written is still the newest copy, asked again: no older one lands over it
-        if (write.Failed && answer.Unchanged != true)
-            return new PullAnswer(true, applied, [.. gone, .. Supersede(pull.Ref, answer.Resends)], Failed: true);
-        if (!wrote) return new PullAnswer(true, applied, gone, write.Failed);
-        return new PullAnswer(true, applied, [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
+        if (failed && answer.Unchanged != true)
+            return new PullAnswer(true, offered, [.. gone, .. Supersede(pull.Ref, answer.Resends)], Failed: true);
+        if (offered is not Applied.Copy) return new PullAnswer(true, offered, gone, failed);
+        return new PullAnswer(true, offered, [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
     }
 
-    // host's concealed copy was cleared at its source: so is the master's clipboard, while it holds a concealed copy
-    private bool ClearConcealed(string host)
+    // host's concealed copy was cleared at its source: so is the master's clipboard, while it holds a concealed copy. The
+    // clear, where it replaced the clipboard
+    private ClipboardWrite.Written? ClearConcealed(string host)
     {
-        if (Read("pull response") is not { HasClipboard: true, Concealed: true }) return false;
+        if (Read("pull response") is not { Clipboard: { IsEmpty: false, Secret: true } }) return null;
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard pull response from {Host}: its concealed copy was cleared, clearing the master's", host);
         // the slaves given that copy are told on entry
-        var cleared = Empty(cleared: true);
-        if (!cleared) log.LogWarning("Clipboard pull response from {Host}: the master's concealed copy could not be emptied", host);
+        var cleared = Clear(cleared: true);
+        if (cleared == null) log.LogWarning("Clipboard pull response from {Host}: the master's concealed copy could not be emptied", host);
         return cleared;
     }
 
@@ -597,7 +604,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         // a clipboard that cannot be read is never taken for the user's copy
         if (Read("pull response") is not { } read) return false;
         if (counted == true) return true;
-        var now = ClipboardUtils.ClipboardHash(read);
+        var now = ClipboardUtils.ClipboardHash(read.Clipboard);
         lock (_lock)
             return now != pull.Against.Hash && now != _wrote;
     }
@@ -658,7 +665,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         {
             if (version != _version) return new VersionedRead(clip, version);
             _known = ClipboardBaseline.Of(clip);
-            if (clip.HasClipboard) _concealed = clip.Concealed;
+            if (!clip.Clipboard.IsEmpty) _concealed = clip.Clipboard.Secret;
         }
         return new VersionedRead(clip, version);
     }
@@ -709,7 +716,7 @@ public sealed record OutstandingPull(string Host, int Id)
 // what became of a pull answer: whether it answered the latest pull to its host, what it applied, the older pulls its
 // newer copy superseded, whether its write failed, to be warned about and shown where the cursor is, and the newer pull
 // it is held for, whose answer lands it
-public sealed record PullAnswer(bool Taken, ClipboardSnapshot? Applied, IReadOnlyList<OutstandingPull> Superseded, bool Failed = false,
+public sealed record PullAnswer(bool Taken, Applied? Applied, IReadOnlyList<OutstandingPull> Superseded, bool Failed = false,
     OutstandingPull? HeldFor = null)
 {
     public static readonly PullAnswer Ignored = new(false, null, []);

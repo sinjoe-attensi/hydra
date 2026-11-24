@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Tests.Setup;
 using static Tests.Setup.ClipboardStreaming;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Relay;
 
@@ -260,7 +261,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         {
             Assert.That(offeredEarly, Is.Zero);
             Assert.That(bundle.Relay.Sent.Of<ClipboardHashMessage>(MessageKind.ClipboardHash, "remote").Select(h => h.Hash),
-                Is.EqualTo([ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, clipboard.ImagePng))]));
+                Is.EqualTo([ClipboardUtils.ClipboardHash(Snapshot(null, null, clipboard.ImagePng).Clipboard)]));
         }
     }
 
@@ -634,7 +635,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
             Assert.That(atBegin, Is.EqualTo([new ClipboardHashMessage(null, Pending: true)]));
             Assert.That(beforeLast, Is.EqualTo(1));
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(hashes[^1].Pending, Is.Null);
         }
     }
@@ -800,7 +801,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
             Assert.That(beforeLast, Is.EqualTo(1));
             Assert.That(clipboard.ImagePng, Is.EqualTo(image));
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(hashes[^1].Pending, Is.Null);
             Assert.That(push.ImagePng, Is.EqualTo(image));
             Assert.That(relay.Sent.Of(MessageKind.ClipboardPush, "remote2"), Is.Empty);
@@ -862,7 +863,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         {
             Assert.That(whenLeft, Is.EqualTo([new ClipboardHashMessage(null, Pending: true)]));
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(hashes[^1].Visit, Is.Not.Null, "stamped with its visit");
             Assert.That(clipboard.ImagePng, Is.EqualTo(image));
         }
@@ -1238,7 +1239,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         {
             Assert.That(whileWaiting, Is.EqualTo([new ClipboardHashMessage(null, Pending: true)]), "pre-condition: told Pending only");
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(clipboard.ImagePng, Is.EqualTo(image));
         }
     }
@@ -1391,7 +1392,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
             Assert.That(atEntry, Is.EqualTo([new ClipboardHashMessage(null, Pending: true)]));
             Assert.That(afterFirst, Is.EqualTo(atEntry));
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(hashes[^1].Pending, Is.Null);
             Assert.That(clipboard.ImagePng, Is.EqualTo(image));
         }
@@ -1516,12 +1517,12 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
             Assert.That(atEntry, Is.EqualTo([new ClipboardHashMessage(null, Pending: true)]));
             Assert.That(afterUnchanged, Is.EqualTo(atEntry));
             Assert.That(hashes, Has.Count.EqualTo(2));
-            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(hashes[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(hashes[^1].Pending, Is.Null);
             Assert.That(clipboard.ImagePng, Is.EqualTo(image));
             // told Pending, its wait replaced by remote3's, it is owed its hash: one hash more, of the streamed copy
             Assert.That(SentTo(relay, "remote2"), Has.Count.EqualTo(toLeftHost + 1));
-            Assert.That(Hashes(relay, "remote2")[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, image))));
+            Assert.That(Hashes(relay, "remote2")[^1].Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(null, null, image).Clipboard)));
             Assert.That(relay.Sent.Of(MessageKind.ClipboardStreamAbort, "remote"), Is.Empty);
         }
     }
@@ -1582,7 +1583,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
             Assert.That(aborted, Is.EqualTo([old]));
             Assert.That(relay.Sent.Of<ClipboardStreamChunkMessage>(MessageKind.ClipboardStreamChunk, "remote2").Select(c => c.Id), Has.None.EqualTo(old));
             Assert.That(Hashes(relay, "remote2").Skip(atReentry).Select(h => h.Hash),
-                Is.EqualTo([ClipboardUtils.ClipboardHash(new ClipboardSnapshot(null, null, copy))]));
+                Is.EqualTo([ClipboardUtils.ClipboardHash(Snapshot(null, null, copy).Clipboard)]));
             Assert.That(push.ImagePng, Is.EqualTo(copy));
             Assert.That(relay.Sent.Of(MessageKind.ClipboardPush, "remote2"), Is.Empty);
         }

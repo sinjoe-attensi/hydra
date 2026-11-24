@@ -2,6 +2,7 @@ using Hydra.Platform;
 using Hydra.Relay;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Platform;
 
@@ -38,7 +39,7 @@ public abstract class EmulatedPrimarySelectionContract
     // Hydra's write as ClipboardUtils.ApplyPreservingFiles makes it: the selection beside it set first
     protected static ClipboardWrite Write(IClipboardPlatform platform, ClipboardSnapshot contents)
     {
-        if (contents.PrimaryText is { } selection) platform.KeepSelection(selection);
+        if (contents.Selection is { } selection) platform.KeepSelection(selection);
         return platform.Clipboard.Write(contents.Clipboard);
     }
 
@@ -53,17 +54,17 @@ public abstract class EmulatedPrimarySelectionContract
     // Hydra's write with a relayed selection beside it, then whatever the test has another app do
     protected void HydraWritesThen(Action otherApp)
     {
-        Write(new ClipboardSnapshot("written", "relayed selection", null));
+        Write(Snapshot("written", "relayed selection", null));
         otherApp();
     }
 
-    protected void OtherAppCopies(string? text, byte[]? png = null) => Write(_otherApp, new ClipboardSnapshot(text, null, png));
+    protected void OtherAppCopies(string? text, byte[]? png = null) => Write(_otherApp, Snapshot(text, null, png));
 
     [Test]
     public void Version_MovesOnAWriteAndOnAnotherAppsCopy_NotOnAPaste()
     {
         var start = Hydra.Clipboard.Count();
-        Write(new ClipboardSnapshot("written", null, null));
+        Write(Snapshot("written", null, null));
         var afterWrite = Hydra.Clipboard.Count();
         _otherApp.Clipboard.Read().AsContents();
         var afterPaste = Hydra.Clipboard.Count();
@@ -82,7 +83,7 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void WrittenAt_IsTheVersionRightAfterTheWrite_AndAForeignCopyMovesPastIt()
     {
-        var written = Hydra.Written(new ClipboardSnapshot("written", null, null));
+        var written = Hydra.Written(Snapshot("written", null, null));
         var afterWrite = Hydra.Clipboard.Version;
         OtherAppCopies("written");
 
@@ -96,7 +97,7 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void WrittenAt_OfAClear_IsTheVersionAfterIt()
     {
-        Write(new ClipboardSnapshot("written", null, null));
+        Write(Snapshot("written", null, null));
 
         Assert.That(Hydra.Cleared().At, Is.EqualTo(Hydra.Clipboard.Version));
     }
@@ -105,7 +106,7 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void Version_DoesNotMoveOnASelectionAlone()
     {
-        Write(new ClipboardSnapshot("written", null, null));
+        Write(Snapshot("written", null, null));
         var before = Hydra.Clipboard.Version;
 
         Hydra.KeepSelection("relayed selection");
@@ -116,7 +117,7 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void OwnWrite_ReadsBackAsAnEcho_AndStillHoldsIt()
     {
-        var written = Hydra.Written(new ClipboardSnapshot("written", "relayed selection", null));
+        var written = Hydra.Written(Snapshot("written", "relayed selection", null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -128,7 +129,7 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void SameTextCopiedAgain_IsNoEcho_AndNoLongerHoldsTheWrite()
     {
-        var written = Hydra.Written(new ClipboardSnapshot("written", "relayed selection", null));
+        var written = Hydra.Written(Snapshot("written", "relayed selection", null));
         OtherAppCopies("written");
 
         using (Assert.EnterMultipleScope())
@@ -182,17 +183,17 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void Clear_LeavesThePlaceholderForOtherAppsAndNothingForHydra()
     {
-        Write(new ClipboardSnapshot("written", "relayed selection", Png));
+        Write(Snapshot("written", "relayed selection", Png));
 
         var cleared = Hydra.Cleared();
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_otherApp.Clipboard.Read().AsContents().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
+            Assert.That(_otherApp.Clipboard.Read().AsContents().Text, Is.EqualTo(ClipboardUtils.PlaceholderText));
             Assert.That(_otherApp.Clipboard.Read().AsContents().Png, Is.Null);
             Assert.That(Hydra.Clipboard.StillHolds(cleared), Is.True);
-            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, cleared, NullLogger.Instance, "test")!.HasClipboard, Is.False);
-            Assert.That(_otherApp.ReadSelection().TextOrNone(), Is.Not.EqualTo(ClipboardSnapshot.PlaceholderText), "the placeholder is never a text copy");
+            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, cleared, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
+            Assert.That(_otherApp.ReadSelection().TextOrNone(), Is.Not.EqualTo(ClipboardUtils.PlaceholderText), "the placeholder is never a text copy");
             Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("relayed selection"));
         }
     }
@@ -201,21 +202,21 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void Clear_IsNeverConcealed()
     {
-        Write(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        Write(Snapshot("hunter2", null, null, Concealed: true));
 
         Clear();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
-            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test")!.Concealed, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
         }
     }
 
     [Test]
     public void Write_ReportsEveryFormatItTook()
     {
-        var contents = new ClipboardSnapshot("written", "relayed selection", null, Html: "<b>written</b>");
+        var contents = Snapshot("written", "relayed selection", null, Html: "<b>written</b>");
 
         Assert.That(Taken(Write(contents)), Is.EqualTo(new ClipboardContents("written", "<b>written</b>", null, null, false)));
     }
@@ -224,7 +225,7 @@ public abstract class EmulatedPrimarySelectionContract
     public void SelectionOnly_LeavesTheClipboardAndOutranksAnEarlierCopy()
     {
         OtherAppCopies("copied first");
-        ClipboardUtils.ApplyPreservingFiles(Hydra, new ClipboardSnapshot(null, "selected later", null), NullLogger.Instance, "test");
+        ClipboardUtils.ApplyPreservingFiles(Hydra, Snapshot(null, "selected later", null), NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -236,26 +237,26 @@ public abstract class EmulatedPrimarySelectionContract
     [Test]
     public void ConcealedWrite_ReadsAsConcealedInAnotherApp()
     {
-        Write(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        Write(Snapshot("hunter2", null, null, Concealed: true));
         var read = ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_otherApp.Clipboard.Read().AsContents().Secret, Is.True);
-            Assert.That(read?.Text, Is.EqualTo("hunter2"));
-            Assert.That(read?.Concealed, Is.True);
+            Assert.That(read?.Clipboard.Text, Is.EqualTo("hunter2"));
+            Assert.That(read?.Clipboard.Secret, Is.True);
         }
     }
 
     [Test]
     public void PlainWrite_ReadsAsNotConcealedInAnotherApp()
     {
-        Write(new ClipboardSnapshot("plain", null, null));
+        Write(Snapshot("plain", null, null));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_otherApp.Clipboard.Read().AsContents().Secret, Is.False);
-            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test")!.Concealed, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
         }
     }
 }

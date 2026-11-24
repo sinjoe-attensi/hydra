@@ -3,6 +3,7 @@ using Hydra.Relay;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -14,26 +15,26 @@ public class ClipboardHandshakeTests
     private static readonly Func<string, ulong?> NothingPending = _ => null;
 
     [Test]
-    public void EchoFallback_SelectionOnly_KeepsTheClipboardFallback()
+    public void SelectionOnlyPush_KeepsTheClipboardFallback()
     {
         // the fake reads nothing back, as a host does its own write
-        var echo = new EchoFallback(new FakeClipboardSync(), Log);
-        echo.Remember(new ClipboardSnapshot("written", null, null, Html: "<b>written</b>"));
+        var slave = new ClipboardSlave(new FakeClipboardSync(), Log, NothingPending);
+        slave.OnPush(new ClipboardPushMessage("written", Html: "<b>written</b>"), "master");
 
-        echo.Remember(new ClipboardSnapshot(null, "new selection", null));
+        slave.OnPush(new ClipboardPushMessage("", "new selection"), "master");
 
-        Assert.That(echo.Read("test")!.Html, Is.EqualTo("<b>written</b>"));
+        Assert.That(slave.OnPull(new ClipboardPullMessage(1), "master").Html, Is.EqualTo("<b>written</b>"));
     }
 
     [Test]
     public void EchoFallback_Clipboard_ReplacesTheFallback()
     {
         var echo = new EchoFallback(new FakeClipboardSync(), Log);
-        echo.Remember(new ClipboardSnapshot("old", "selection", null));
+        echo.Remember(Snapshot("old", "selection", null).Clipboard);
 
-        echo.Remember(new ClipboardSnapshot("new", null, null));
+        echo.Remember(Snapshot("new", null, null).Clipboard);
 
-        Assert.That(echo.Read("test")!.Text, Is.EqualTo("new"));
+        Assert.That(echo.Read("test")!.Clipboard.Text, Is.EqualTo("new"));
     }
 
     [Test]
@@ -58,7 +59,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         var echo = new EchoFallback(sync, Log);
-        echo.Remember(new ClipboardSnapshot("written", null, null));
+        echo.Remember(Snapshot("written", null, null).Clipboard);
 
         echo.Empty();
 
@@ -80,7 +81,7 @@ public class ClipboardHandshakeTests
         slave.Empty();
         var answer = slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("anything")), "master");
         slave.Entered("master");
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("pushed", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("pushed", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -239,7 +240,7 @@ public class ClipboardHandshakeTests
 
         var pull = master.Pull("a", StreamingHash);
 
-        Assert.That(pull.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("on the master", null, null))));
+        Assert.That(pull.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot("on the master", null, null).Clipboard)));
     }
 
     [Test]
@@ -360,7 +361,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(held.Taken, Is.True, "the stream's pull is still answered by it");
-            Assert.That(landed.Applied?.Text, Is.EqualTo("streamed from a"));
+            Assert.That(landed.Applied.CopyText(), Is.EqualTo("streamed from a"));
             Assert.That(sync.Text, Is.EqualTo("streamed from a"));
             Assert.That(master.Outstanding, Is.Empty);
         }
@@ -387,7 +388,7 @@ public class ClipboardHandshakeTests
             Assert.That(superseded, Is.Empty);
             Assert.That(outstanding, Is.EqualTo([new OutstandingPull("a", first.PullId), new OutstandingPull("a", second.PullId)]));
             Assert.That(held.Taken, Is.True, "the stream's pull is still answered by it");
-            Assert.That(landed.Applied?.Text, Is.EqualTo("streamed from a"));
+            Assert.That(landed.Applied.CopyText(), Is.EqualTo("streamed from a"));
             Assert.That(sync.Text, Is.EqualTo("streamed from a"));
             Assert.That(master.Outstanding, Is.Empty);
         }
@@ -481,7 +482,7 @@ public class ClipboardHandshakeTests
         sync.ReadFailsValue = true;
         var taken = master.TakePullAnswer("a", new ClipboardPullResponseMessage(pull.PullId, "from a"));
 
-        Assert.That(taken.Applied?.Text, Is.EqualTo("from a"));
+        Assert.That(taken.Applied.CopyText(), Is.EqualTo("from a"));
     }
 
     [Test]
@@ -500,7 +501,7 @@ public class ClipboardHandshakeTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(fromC.Applied?.Text, Is.EqualTo("from c"), "a's answer is hydra's write, no user copy");
+            Assert.That(fromC.Applied.CopyText(), Is.EqualTo("from c"), "a's answer is hydra's write, no user copy");
             Assert.That(sync.Text, Is.EqualTo("from c"));
         }
     }
@@ -510,7 +511,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
-        var offered = ClipboardWire.ToHash(new ClipboardSnapshot("streaming", null, null));
+        var offered = ClipboardWire.ToHash(Snapshot("streaming", null, null));
         var slave = new ClipboardSlave(sync, Log, host => host == "master" ? offered.Hash : null);
 
         Assert.That(slave.OnHash(offered, "master"), Is.EqualTo(PushNeed.None));
@@ -521,7 +522,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
-        var offered = ClipboardWire.ToHash(new ClipboardSnapshot("streaming", new string('s', 5000), null));
+        var offered = ClipboardWire.ToHash(Snapshot("streaming", new string('s', 5000), null));
         var slave = new ClipboardSlave(sync, Log, host => host == "master" ? offered.Hash : null);
 
         Assert.That(slave.OnHash(offered, "master"), Is.EqualTo(PushNeed.Selection));
@@ -532,7 +533,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         var selection = new string('s', 5000);
-        var offered = ClipboardWire.ToHash(new ClipboardSnapshot("streaming", selection, null));
+        var offered = ClipboardWire.ToHash(Snapshot("streaming", selection, null));
         var slave = new ClipboardSlave(sync, Log, host => host == "master" ? offered.Hash : null);
 
         Assert.That(slave.OnHash(offered, "master"), Is.EqualTo(PushNeed.Selection));
@@ -550,7 +551,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
-        var offered = ClipboardWire.ToHash(new ClipboardSnapshot("streaming", null, null));
+        var offered = ClipboardWire.ToHash(Snapshot("streaming", null, null));
         var slave = new ClipboardSlave(sync, Log, _ => offered.Hash + 1);
 
         Assert.That(slave.OnHash(offered, "master"), Is.EqualTo(PushNeed.Clipboard));
@@ -566,7 +567,7 @@ public class ClipboardHandshakeTests
         Assert.That(slave.OnHash(new ClipboardHashMessage(null, Pending: true), "master"), Is.EqualTo(PushNeed.None));
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("streamed", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("streamed", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -574,7 +575,7 @@ public class ClipboardHandshakeTests
             Assert.That(sync.Text, Is.EqualTo("copied here"));
         }
         // the copy was kept once; a later hash is checked as usual
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("newer", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("newer", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
     }
 
     [Test]
@@ -588,7 +589,7 @@ public class ClipboardHandshakeTests
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
 
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("streamed", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("streamed", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
         slave.OnPush(new ClipboardPushMessage("streamed", selection), "master");
 
         using (Assert.EnterMultipleScope())
@@ -609,7 +610,7 @@ public class ClipboardHandshakeTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("streamed", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
+            Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("streamed", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
             Assert.That(sync.Text, Is.Null);
         }
     }
@@ -619,7 +620,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
-        var pending = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("streaming", null, null));
+        var pending = ClipboardUtils.ClipboardHash(Snapshot("streaming", null, null).Clipboard);
         var slave = new ClipboardSlave(sync, Log, host => host == "master" ? pending : null);
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, pending), "master");
@@ -633,7 +634,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
         sync.SetPrimaryText("selected here");
-        var pending = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("streaming", null, null));
+        var pending = ClipboardUtils.ClipboardHash(Snapshot("streaming", null, null).Clipboard);
         var slave = new ClipboardSlave(sync, Log, _ => pending);
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, pending, ClipboardUtils.StableHash("selected there")), "master");
@@ -646,7 +647,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         sync.SetupText("old");
-        var pending = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("streaming", null, null));
+        var pending = ClipboardUtils.ClipboardHash(Snapshot("streaming", null, null).Clipboard);
         var slave = new ClipboardSlave(sync, Log, _ => pending + 1);
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, pending), "master");
@@ -662,7 +663,7 @@ public class ClipboardHandshakeTests
     public void SlavePull_PendingFromTheMaster_UserCopiedSince_AnswersWithTheCopy()
     {
         var sync = new FakeClipboardSync();
-        var pending = ClipboardUtils.ClipboardHash(new ClipboardSnapshot("streaming", null, null));
+        var pending = ClipboardUtils.ClipboardHash(Snapshot("streaming", null, null).Clipboard);
         var slave = new ClipboardSlave(sync, Log, _ => pending);
         slave.Begun("master", pending);
         sync.SetupText("copied here");
@@ -806,12 +807,12 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.StillHoldsValue = false;
         sync.SetupText("entry");
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("late", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -833,7 +834,7 @@ public class ClipboardHandshakeTests
         var at = sync.Version;
 
         var failed = slave.OnPush(new ClipboardPushMessage("hunter2", Concealed: true), "master");
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("older", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("older", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -888,7 +889,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync { ClearFailsValue = true };
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         sync.SetupText("copied here");
 
         Assert.That(slave.CopiedSinceHash("master"), Is.True);
@@ -900,12 +901,12 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         var refused = slave.CopiedSinceHash("master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         slave.Empty();
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("late", null, null)), "master");
         var answer = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.StableHash("another")), "master");
 
         using (Assert.EnterMultipleScope())
@@ -939,7 +940,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(refused, Is.False);
-            Assert.That(fromA.Applied?.Text, Is.EqualTo("z"));
+            Assert.That(fromA.Applied.CopyText(), Is.EqualTo("z"));
             Assert.That(sync.Text, Is.EqualTo("z"));
         }
     }
@@ -1011,7 +1012,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("the master's", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("the master's", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -1028,7 +1029,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
 
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("the master's", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("the master's", null, null)), "master");
 
         Assert.That(sync.ClearClipboardCallCount, Is.Zero);
     }
@@ -1041,7 +1042,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("same", new string('s', 5000), null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("same", new string('s', 5000), null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -1059,12 +1060,12 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("late", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -1079,13 +1080,13 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
         var selection = new string('s', 5000);
 
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("late", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
         slave.OnPush(new ClipboardPushMessage("late", selection), "master");
 
         using (Assert.EnterMultipleScope())
@@ -1101,10 +1102,10 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
 
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("late", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
     }
 
     [Test]
@@ -1113,14 +1114,14 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.Entered("master");
-        slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
+        slave.OnHash(ClipboardWire.ToHash(Snapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
 
         slave.Entered("master");
 
-        Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("newer", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
+        Assert.That(slave.OnHash(ClipboardWire.ToHash(Snapshot("newer", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
     }
 
     // the first hash of a visit may come late too (deferred), after the user copied here since the entry
@@ -1134,7 +1135,7 @@ public class ClipboardHandshakeTests
         sync.SetupText("copied here");
         sync.StillHoldsValue = false;
 
-        var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("newer", null, null)), "master");
+        var need = slave.OnHash(ClipboardWire.ToHash(Snapshot("newer", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -1172,7 +1173,7 @@ public class ClipboardHandshakeTests
         sync.SetupText("the user's copy");
         sync.ReadFailsValue = true;
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        var hash = ClipboardWire.ToHash(new ClipboardSnapshot("the master's copy", null, null));
+        var hash = ClipboardWire.ToHash(Snapshot("the master's copy", null, null));
 
         var need = slave.OnHash(hash, "master");
 
@@ -1189,7 +1190,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync { ReadFailsValue = true };
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        var hash = ClipboardWire.ToHash(new ClipboardSnapshot("the master's copy", null, null));
+        var hash = ClipboardWire.ToHash(Snapshot("the master's copy", null, null));
         slave.OnHash(hash, "master");
 
         sync.ReadFailsValue = false;
@@ -1223,7 +1224,7 @@ public class ClipboardHandshakeTests
         sync.ReadFailsValue = true;
         var pull = master.Pull("slave");
 
-        Assert.That(pull.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("copied on the master", null, null))));
+        Assert.That(pull.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot("copied on the master", null, null).Clipboard)));
     }
 
     [Test]
@@ -1255,10 +1256,10 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync { HidesOwnWriteValue = true };
         sync.RefusedFormats.Add(ClipboardFormat.Html);
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        var pushed = new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>");
+        var pushed = Snapshot("plain", null, null, Html: "<b>rich</b>");
 
         slave.OnPush(ClipboardWire.ToPush(pushed), "master");
-        var answer = slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.ClipboardHash(pushed)), "master");
+        var answer = slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.ClipboardHash(pushed.Clipboard)), "master");
         slave.Entered("master");
         var need = slave.OnHash(ClipboardWire.ToHash(pushed), "master");
 
@@ -1276,7 +1277,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync { HidesOwnWriteValue = true };
         sync.RefusedFormats.Add(ClipboardFormat.Html);
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        var pushed = new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>");
+        var pushed = Snapshot("plain", null, null, Html: "<b>rich</b>");
         slave.OnPush(ClipboardWire.ToPush(pushed), "master");
 
         Assert.That(slave.OnHash(ClipboardWire.ToHash(pushed), "master"), Is.EqualTo(PushNeed.Clipboard));
@@ -1287,7 +1288,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync { HidesOwnWriteValue = true };
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        var pushed = new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>");
+        var pushed = Snapshot("plain", null, null, Html: "<b>rich</b>");
         slave.OnPush(ClipboardWire.ToPush(pushed), "master");
 
         Assert.That(slave.OnHash(ClipboardWire.ToHash(pushed), "master"), Is.EqualTo(PushNeed.None));
@@ -1295,7 +1296,7 @@ public class ClipboardHandshakeTests
 
     // -- a concealed copy cleared at its source is cleared where it was relayed --
 
-    private static readonly ClipboardSnapshot Password = new("hunter2", null, null, Concealed: true);
+    private static readonly ClipboardSnapshot Password = Snapshot("hunter2", null, null, Concealed: true);
 
     [Test]
     public void SlaveConcealedPush_ClearedHash_ClearsHydrasWriteOfIt()
@@ -1358,8 +1359,8 @@ public class ClipboardHandshakeTests
         sync.ClearClipboard();
         sync.StillHoldsValue = false;
 
-        var second = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.ClipboardHash(Password)), "master");
-        var third = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.ClipboardHash(Password)), "master");
+        var second = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.ClipboardHash(Password.Clipboard)), "master");
+        var third = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.ClipboardHash(Password.Clipboard)), "master");
 
         using (Assert.EnterMultipleScope())
         {
@@ -1378,7 +1379,7 @@ public class ClipboardHandshakeTests
         slave.OnPull(new ClipboardPullMessage(1), "master");
 
         slave.Empty();
-        var answer = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.ClipboardHash(Password)), "master");
+        var answer = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.ClipboardHash(Password.Clipboard)), "master");
 
         Assert.That(answer.Cleared, Is.Null);
     }
@@ -1418,7 +1419,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(taken.Taken, Is.True);
-            Assert.That(taken.Applied, Is.EqualTo(ClipboardSnapshot.Placeholder), "the clear is what it wrote, offered on");
+            Assert.That(taken.Applied, Is.InstanceOf<Applied.Emptied>(), "the clear is what it wrote, offered on");
             Assert.That(sync.ClearClipboardCallCount, Is.EqualTo(1));
             Assert.That(sync.Text, Is.Null);
             Assert.That(hash?.Cleared, Is.True);
@@ -1525,9 +1526,9 @@ public class ClipboardHandshakeTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(third.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("x1 from a", null, null))), "the held content");
+            Assert.That(third.MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot("x1 from a", null, null).Clipboard)), "the held content");
             Assert.That(late.Taken, Is.False, "the replaced pull's answer");
-            Assert.That(landed.Applied?.Text, Is.EqualTo("x1 from a"));
+            Assert.That(landed.Applied.CopyText(), Is.EqualTo("x1 from a"));
             Assert.That(sync.Text, Is.EqualTo("x1 from a"));
         }
     }
@@ -1587,7 +1588,7 @@ public class ClipboardHandshakeTests
         {
             Assert.That(sync.Text, Is.EqualTo("x1 from a"));
             Assert.That(landed.Select(l => l.Pull), Is.EqualTo([new OutstandingPull("a", first.PullId)]));
-            Assert.That(landed.Select(l => l.Answer?.Applied?.Text), Is.EqualTo(["x1 from a"]));
+            Assert.That(landed.Select(l => l.Answer?.Applied.CopyText()), Is.EqualTo(["x1 from a"]));
             Assert.That(master.Outstanding, Is.Empty);
         }
     }
@@ -1673,7 +1674,7 @@ public class ClipboardHandshakeTests
             Assert.That(master.Hash(), Is.Null, "nothing to offer, never the older copy");
             Assert.That(master.Push(), Is.Null);
             Assert.That(ClipboardChanges.Of(sync).CopiedSince(at), Is.False, "Hydra's own write");
-            Assert.That(master.Pull("b").MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(ClipboardSnapshot.Empty)));
+            Assert.That(master.Pull("b").MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(ClipboardContents.Empty)));
             Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message), Has.Some.Contains("a").And.Contains("concealed"));
         }
     }
@@ -2039,7 +2040,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(sync.Text, Is.EqualTo("copied on a"), "pre-condition: taken mid-read");
-            Assert.That(hash?.Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("copied on a", null, null))));
+            Assert.That(hash?.Hash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot("copied on a", null, null).Clipboard)));
             Assert.That(hash?.ResendFrom, Is.Null);
         }
     }
@@ -2087,7 +2088,7 @@ public class ClipboardHandshakeTests
         {
             Assert.That(held.Taken, Is.True, "pre-condition: held");
             Assert.That(held.Applied, Is.Null, "pre-condition: held");
-            Assert.That(landed.Applied?.Text, Is.EqualTo("x1 from a"));
+            Assert.That(landed.Applied.CopyText(), Is.EqualTo("x1 from a"));
             Assert.That(sync.Text, Is.EqualTo("x1 from a"));
         }
     }
@@ -2106,7 +2107,7 @@ public class ClipboardHandshakeTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(held?.Answer?.Applied?.Text, Is.EqualTo("x1 from a"), "pre-condition: the held answer landed");
+            Assert.That(held?.Answer?.Applied.CopyText(), Is.EqualTo("x1 from a"), "pre-condition: the held answer landed");
             Assert.That(late.Taken, Is.True);
             Assert.That(sync.Text, Is.EqualTo("y, newer from a"));
             Assert.That(master.Pull("a").ResendFrom, Is.Null, "its answer was taken");
@@ -2159,8 +2160,8 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(bWaited, Is.True, "pre-condition: b's answer waited behind the landing");
-            Assert.That(landed?.Answer?.Applied?.Text, Is.EqualTo("x1 from a"), "pre-condition: the held answer landed first");
-            Assert.That(taken.Applied?.Text, Is.EqualTo("newest from b"));
+            Assert.That(landed?.Answer?.Applied.CopyText(), Is.EqualTo("x1 from a"), "pre-condition: the held answer landed first");
+            Assert.That(taken.Applied.CopyText(), Is.EqualTo("newest from b"));
             Assert.That(sync.Text, Is.EqualTo("newest from b"));
         }
     }
@@ -2243,7 +2244,7 @@ public class ClipboardHandshakeTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(taken.Applied?.IsSelectionOnly, Is.True, "pre-condition: the selection applied");
+            Assert.That(taken.Applied, Is.InstanceOf<Applied.SelectionAlone>(), "pre-condition: the selection applied");
             Assert.That(master.Pull("a").ResendFrom, Is.EqualTo(toA.PullId));
         }
     }

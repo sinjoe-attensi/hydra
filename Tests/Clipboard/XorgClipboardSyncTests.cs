@@ -6,6 +6,7 @@ using Hydra.Relay;
 using Hydra.Platform.Linux;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -32,7 +33,7 @@ public class XorgClipboardSyncTests
     public void Serve_String_IsLatin1_Utf8String_IsUtf8()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("café", null, null));
+        owner.SetClipboard(Snapshot("café", null, null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -45,7 +46,7 @@ public class XorgClipboardSyncTests
     public void Serve_Html_AndText()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("café", null, null, Html: "<b>café</b>"));
+        owner.SetClipboard(Snapshot("café", null, null, Html: "<b>café</b>"));
 
         using (Assert.EnterMultipleScope())
         {
@@ -59,7 +60,7 @@ public class XorgClipboardSyncTests
     {
         var png = TestImages.Png;
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot(null, null, png));
+        owner.SetClipboard(Snapshot(null, null, png));
 
         Assert.That(XclipRead("image/png"), Is.EqualTo(png));
     }
@@ -76,7 +77,7 @@ public class XorgClipboardSyncTests
                 Assert.Ignore("this X server takes no request large enough for 1 MiB (no BIG-REQUESTS)");
             var text = new string('x', size);
             using var owner = new XorgClipboardSync();
-            owner.SetClipboard(new ClipboardSnapshot(text, null, null));
+            owner.SetClipboard(Snapshot(text, null, null));
 
             var window = NativeMethods.XCreateSimpleWindow(requestor, NativeMethods.XDefaultRootWindow(requestor), 0, 0, 1, 1, 0, nint.Zero, nint.Zero);
             var utf8 = NativeMethods.XInternAtom(requestor, "UTF8_STRING", false);
@@ -113,7 +114,7 @@ public class XorgClipboardSyncTests
         var data = new byte[300 * 1024];
         for (var i = 0; i < data.Length; i++) data[i] = (byte)('a' + i % 26);
         using var owner = new XorgClipboardSync(maxPropertyBytes: limit);
-        owner.SetClipboard(new ClipboardSnapshot(Encoding.UTF8.GetString(data), null, null));
+        owner.SetClipboard(Snapshot(Encoding.UTF8.GetString(data), null, null));
 
         var requestor = NativeMethods.XOpenDisplay(null);
         try
@@ -211,7 +212,7 @@ public class XorgClipboardSyncTests
     public void Serve_Concealed_ListsThePasswordHintAndServesSecret()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        owner.SetClipboard(Snapshot("hunter2", null, null, Concealed: true));
 
         using (Assert.EnterMultipleScope())
         {
@@ -225,7 +226,7 @@ public class XorgClipboardSyncTests
     public void Serve_Plain_HasNoPasswordHint()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("plain", null, null));
+        owner.SetClipboard(Snapshot("plain", null, null));
 
         Assert.That(Targets(), Does.Not.Contain("x-kde-passwordManagerHint"));
     }
@@ -244,15 +245,15 @@ public class XorgClipboardSyncTests
     {
         using var owner = new XorgClipboardSync();
         using var reader = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
+        owner.SetClipboard(Snapshot("hunter2", null, null, Concealed: true));
         XclipRead("UTF8_STRING"); // barrier, as in RoundTrip_HtmlAndText_BetweenInstances
 
         var read = ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(read?.Text, Is.EqualTo("hunter2"));
-            Assert.That(read?.Concealed, Is.True);
+            Assert.That(read?.Clipboard.Text, Is.EqualTo("hunter2"));
+            Assert.That(read?.Clipboard.Secret, Is.True);
         }
     }
 
@@ -297,7 +298,7 @@ public class XorgClipboardSyncTests
     {
         using var owner = new XorgClipboardSync();
         using var reader = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>"));
+        owner.SetClipboard(Snapshot("plain", null, null, Html: "<b>rich</b>"));
 
         // barrier: block until the owner actually serves the selection to a third connection,
         // which proves ownership has propagated server-side before the C# reader converts it
@@ -352,7 +353,7 @@ public class XorgClipboardSyncTests
     public void SetClipboard_ServesClipboardAndPrimarySeparately()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("copied", "selected", null));
+        owner.SetClipboard(Snapshot("copied", "selected", null));
 
         using (Assert.EnterMultipleScope())
         {
@@ -365,7 +366,7 @@ public class XorgClipboardSyncTests
     public void EchoFallback_OnlyWhileClipboardIsStillOurs()
     {
         using var owner = new XorgClipboardSync();
-        var ours = owner.Written(new ClipboardSnapshot("ours", null, null));
+        var ours = owner.Written(Snapshot("ours", null, null));
         Assert.That(owner.StillHolds(ours), Is.True);
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("theirs"));
@@ -381,7 +382,7 @@ public class XorgClipboardSyncTests
     {
         using var owner = new XorgClipboardSync();
         var start = owner.Count();
-        var ours = owner.Written(new ClipboardSnapshot("ours", null, null));
+        var ours = owner.Written(Snapshot("ours", null, null));
         var afterWrite = owner.Count();
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("ours"));
@@ -399,13 +400,13 @@ public class XorgClipboardSyncTests
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
-        otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
+        var ours = hydra.Written(Snapshot("ours", null, null));
+        otherApp.SetClipboard(Snapshot("theirs", null, null));
         Assert.That(LosesOwnership(hydra, ours), Is.True, "pre-condition: the other client owns it");
         var before = Settled(hydra);
 
         // the same client, the same content: no SelectionClear reaches hydra, only XFixes' owner notice
-        otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
+        otherApp.SetClipboard(Snapshot("theirs", null, null));
 
         Assert.That(Moves(hydra, before), Is.True);
     }
@@ -415,10 +416,10 @@ public class XorgClipboardSyncTests
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(Snapshot("ours", null, null));
         var before = Settled(hydra);
 
-        otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
+        otherApp.SetClipboard(Snapshot("theirs", null, null));
         _ = hydra.Count(); // most likely before SelectionClear and the owner notice land
 
         using (Assert.EnterMultipleScope())
@@ -432,7 +433,7 @@ public class XorgClipboardSyncTests
     public void Version_OneOwnerChange_MovesOnce_CountedAfterTheNotice()
     {
         using var hydra = new XorgClipboardSync();
-        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(Snapshot("ours", null, null));
         var before = Settled(hydra);
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("theirs"));
@@ -454,10 +455,10 @@ public class XorgClipboardSyncTests
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(Snapshot("ours", null, null));
         var before = Settled(hydra);
 
-        otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
+        otherApp.SetClipboard(Snapshot("theirs", null, null));
         // a round trip on its own connection: the server has made it the owner before hydra asks
         _ = otherApp.Count();
         var atOnce = hydra.Count();
@@ -474,7 +475,7 @@ public class XorgClipboardSyncTests
     public void WrittenAt_IsTheVersionRightAfterTheWrite_AndAForeignCopyMovesPastIt()
     {
         using var hydra = new XorgClipboardSync();
-        var written = hydra.Written(new ClipboardSnapshot("ours", null, null));
+        var written = hydra.Written(Snapshot("ours", null, null));
         var afterWrite = hydra.Count();
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("ours"));
@@ -492,7 +493,7 @@ public class XorgClipboardSyncTests
     public void Version_DoesNotMoveOnTheSelectionAlone()
     {
         using var hydra = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        hydra.SetClipboard(Snapshot("ours", null, null));
         var before = Settled(hydra);
 
         hydra.SetPrimaryText("selected");
@@ -504,7 +505,7 @@ public class XorgClipboardSyncTests
     public void ReadAll_AnotherClientsCopyEqualToHydrasLastWrite_IsRead()
     {
         using var hydra = new XorgClipboardSync();
-        var ours = hydra.Written(new ClipboardSnapshot("foo", null, null));
+        var ours = hydra.Written(Snapshot("foo", null, null));
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("foo"));
 
@@ -535,18 +536,18 @@ public class XorgClipboardSyncTests
     public void Clear_LeavesThePlaceholderForOtherClients_NothingForHydra_AndLeavesPrimary()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("copied", "selected", null));
+        owner.SetClipboard(Snapshot("copied", "selected", null));
 
         ((IClipboardPlatform)owner).ClearClipboard();
 
         var targets = Targets();
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(XclipRead("UTF8_STRING"), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardSnapshot.PlaceholderText)));
+            Assert.That(XclipRead("UTF8_STRING"), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardUtils.PlaceholderText)));
             Assert.That(targets, Does.Contain("UTF8_STRING"));
             Assert.That(targets, Does.Contain("x-kde-passwordManagerHint"), "so Klipper never keeps the placeholder");
             Assert.That(XclipRead("x-kde-passwordManagerHint"), Is.EqualTo("secret"u8.ToArray()));
-            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, ClipboardChanges.Of(owner.Clipboard).Last, NullLogger.Instance, "test")!.HasClipboard, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, ClipboardChanges.Of(owner.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
             Assert.That(XclipRead("UTF8_STRING", "primary"), Is.EqualTo(Encoding.UTF8.GetBytes("selected")));
         }
     }
@@ -561,7 +562,7 @@ public class XorgClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(reader.Read().AsContents().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
+            Assert.That(reader.Read().AsContents().Text, Is.EqualTo(ClipboardUtils.PlaceholderText));
             Assert.That(ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
         }
     }

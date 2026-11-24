@@ -5,6 +5,7 @@ using Hydra.Relay;
 using Hydra.Platform.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Platform.Windows;
 
@@ -41,7 +42,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
         HydraWritesThen(() => RunInOtherProcess("$f = New-Object System.Collections.Specialized.StringCollection; " +
                                                 $"[void]$f.Add('{file}'); [System.Windows.Forms.Clipboard]::SetFileDropList($f)"));
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(Hydra, new ClipboardSnapshot("pushed", null, null), NullLogger.Instance, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(Hydra, Snapshot("pushed", null, null), NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -109,7 +110,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
     [Test]
     public void ReadAll_ReadsEveryFormatAndTheMarkersAtOnce()
     {
-        Write(new ClipboardSnapshot("hunter2", null, null, Html: "<b>hunter2</b>", Concealed: true));
+        Write(Snapshot("hunter2", null, null, Html: "<b>hunter2</b>", Concealed: true));
         using var otherApp = (WindowsClipboardSync)Create();
 
         Assert.That(otherApp.Read().AsContents(), Is.EqualTo(new ClipboardContents("hunter2", "<b>hunter2</b>", null, null, Secret: true)));
@@ -119,7 +120,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
     public void ReadAll_ReadsEveryFormat()
     {
         byte[] rtf = "{\\rtf1 hunter2}"u8.ToArray();
-        Write(new ClipboardSnapshot("hunter2", null, Png, Html: "<b>hunter2</b>", Rtf: rtf));
+        Write(Snapshot("hunter2", null, Png, Html: "<b>hunter2</b>", Rtf: rtf));
         using var otherApp = (WindowsClipboardSync)Create();
 
         var all = otherApp.Read().AsContents();
@@ -148,7 +149,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
             {
                 if (t % 2 == 0)
                 {
-                    if (Write(new ClipboardSnapshot($"copy {t} {i}", null, Png)) is not ClipboardWrite.Written) Interlocked.Increment(ref failures);
+                    if (Write(Snapshot($"copy {t} {i}", null, Png)) is not ClipboardWrite.Written) Interlocked.Increment(ref failures);
                 }
                 else if ((own ?? Hydra.Clipboard).Read() is ClipboardRead.Unreadable) Interlocked.Increment(ref failures);
             }

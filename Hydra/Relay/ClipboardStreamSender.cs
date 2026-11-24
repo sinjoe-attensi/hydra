@@ -86,7 +86,7 @@ public sealed class ClipboardStreamSender : IAsyncDisposable
         if (blob.Length <= Threshold) return new Prepared(kind, blob, null, 0, unchanged);
         var id = queuedId ?? Interlocked.Increment(ref _nextId);
         // the hash a ClipboardHash or a pull carries for this clipboard, so a pending stream counts as applied
-        var contentHash = ClipboardUtils.ClipboardHash(ClipboardWire.From(message, _log, "stream"));
+        var contentHash = ClipboardWire.ContentHash(message, _log, "stream");
         var response = message as ClipboardPullResponseMessage;
         var begin = new ClipboardStreamBeginMessage(id, kind, blob.Length, XxHash64.HashToUInt64(blob), contentHash, response?.PullId, response?.Resends);
         return new Prepared(kind, blob, MessageSerializer.Encode(MessageKind.ClipboardStreamBegin, begin), id, false);

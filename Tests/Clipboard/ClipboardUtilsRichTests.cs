@@ -3,6 +3,7 @@ using Hydra.Platform;
 using Hydra.Relay;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -55,31 +56,31 @@ public class ClipboardUtilsRichTests
 
     [Test]
     public void ClipboardHash_IgnoresTheSelection() =>
-        Assert.That(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("t", "a", null)),
-            Is.EqualTo(ClipboardUtils.ClipboardHash(new ClipboardSnapshot("t", "b", null))));
+        Assert.That(ClipboardUtils.ClipboardHash(Snapshot("t", "a", null).Clipboard),
+            Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot("t", "b", null).Clipboard)));
 
     [Test]
     public void ClipboardHash_DiffersWhenHtmlDiffers()
     {
-        var a = new ClipboardSnapshot("t", null, null, Html: "<b>a</b>");
-        var b = new ClipboardSnapshot("t", null, null, Html: "<b>b</b>");
-        Assert.That(ClipboardUtils.ClipboardHash(a), Is.Not.EqualTo(ClipboardUtils.ClipboardHash(b)));
+        var a = Snapshot("t", null, null, Html: "<b>a</b>");
+        var b = Snapshot("t", null, null, Html: "<b>b</b>");
+        Assert.That(ClipboardUtils.ClipboardHash(a.Clipboard), Is.Not.EqualTo(ClipboardUtils.ClipboardHash(b.Clipboard)));
     }
 
     [Test]
     public void ClipboardHash_DiffersWhenRtfDiffers()
     {
-        var a = new ClipboardSnapshot("t", null, null, Rtf: [1, 2, 3]);
-        var b = new ClipboardSnapshot("t", null, null, Rtf: [1, 2, 4]);
-        Assert.That(ClipboardUtils.ClipboardHash(a), Is.Not.EqualTo(ClipboardUtils.ClipboardHash(b)));
+        var a = Snapshot("t", null, null, Rtf: [1, 2, 3]);
+        var b = Snapshot("t", null, null, Rtf: [1, 2, 4]);
+        Assert.That(ClipboardUtils.ClipboardHash(a.Clipboard), Is.Not.EqualTo(ClipboardUtils.ClipboardHash(b.Clipboard)));
     }
 
     [Test]
     public void ClipboardHash_StableForSameContent()
     {
-        var a = new ClipboardSnapshot("t", "p", [9], Html: "<i>x</i>", Rtf: [7]);
-        var b = new ClipboardSnapshot("t", "p", [9], Html: "<i>x</i>", Rtf: [7]);
-        Assert.That(ClipboardUtils.ClipboardHash(a), Is.EqualTo(ClipboardUtils.ClipboardHash(b)));
+        var a = Snapshot("t", "p", [9], Html: "<i>x</i>", Rtf: [7]);
+        var b = Snapshot("t", "p", [9], Html: "<i>x</i>", Rtf: [7]);
+        Assert.That(ClipboardUtils.ClipboardHash(a.Clipboard), Is.EqualTo(ClipboardUtils.ClipboardHash(b.Clipboard)));
     }
 
     // -- TrimToFit: plain text is the last thing dropped --
@@ -87,34 +88,34 @@ public class ClipboardUtilsRichTests
     [Test]
     public void TrimToFit_DropsOversizedHtml_KeepsText()
     {
-        var result = ClipboardUtils.TrimToFit("keep me", null, null, OversizedText(), null, Log, "test");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents("keep me", OversizedText(), null, null, false), null, Log, "test");
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("keep me"));
-            Assert.That(result.Html, Is.Null);
+            Assert.That(result.Clipboard.Text, Is.EqualTo("keep me"));
+            Assert.That(result.Clipboard.Html, Is.Null);
         }
     }
 
     [Test]
     public void TrimToFit_DropsOversizedRtf_KeepsText()
     {
-        var result = ClipboardUtils.TrimToFit("keep me", null, null, null, Oversized(), Log, "test");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents("keep me", null, Oversized(), null, false), null, Log, "test");
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("keep me"));
-            Assert.That(result.Rtf, Is.Null);
+            Assert.That(result.Clipboard.Text, Is.EqualTo("keep me"));
+            Assert.That(result.Clipboard.Rtf, Is.Null);
         }
     }
 
     [Test]
     public void TrimToFit_KeepsAllWhenUnderBudget()
     {
-        var result = ClipboardUtils.TrimToFit("t", "p", [1], "<b>x</b>", [2], Log, "test");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents("t", "<b>x</b>", [2], [1], false), "p", Log, "test");
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("t"));
-            Assert.That(result.Html, Is.EqualTo("<b>x</b>"));
-            Assert.That(result.Rtf, Is.EqualTo(new byte[] { 2 }));
+            Assert.That(result.Clipboard.Text, Is.EqualTo("t"));
+            Assert.That(result.Clipboard.Html, Is.EqualTo("<b>x</b>"));
+            Assert.That(result.Clipboard.Rtf, Is.EqualTo(new byte[] { 2 }));
         }
     }
 
@@ -126,9 +127,9 @@ public class ClipboardUtilsRichTests
         var result = ClipboardWire.From(new ClipboardPushMessage("t", Html: OversizedText(), Rtf: Oversized()), Log, "test from host");
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("t"));
-            Assert.That(result.Html, Is.Null);
-            Assert.That(result.Rtf, Is.Null);
+            Assert.That(result.Clipboard.Text, Is.EqualTo("t"));
+            Assert.That(result.Clipboard.Html, Is.Null);
+            Assert.That(result.Clipboard.Rtf, Is.Null);
         }
     }
 
@@ -138,8 +139,8 @@ public class ClipboardUtilsRichTests
         var result = ClipboardWire.From(new ClipboardPushMessage("t", Html: "<b>x</b>", Rtf: [3]), Log, "test from host");
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Html, Is.EqualTo("<b>x</b>"));
-            Assert.That(result.Rtf, Is.EqualTo(new byte[] { 3 }));
+            Assert.That(result.Clipboard.Html, Is.EqualTo("<b>x</b>"));
+            Assert.That(result.Clipboard.Rtf, Is.EqualTo(new byte[] { 3 }));
         }
     }
 
@@ -149,13 +150,13 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_CarriesHtmlAndRtf()
     {
         var sync = new FakeClipboardSync();
-        sync.SetClipboard(new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>", Rtf: [5, 6]));
+        sync.SetClipboard(Snapshot("plain", null, null, Html: "<b>rich</b>", Rtf: [5, 6]));
         var result = ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("plain"));
-            Assert.That(result.Html, Is.EqualTo("<b>rich</b>"));
-            Assert.That(result.Rtf, Is.EqualTo(new byte[] { 5, 6 }));
+            Assert.That(result.Clipboard.Text, Is.EqualTo("plain"));
+            Assert.That(result.Clipboard.Html, Is.EqualTo("<b>rich</b>"));
+            Assert.That(result.Clipboard.Rtf, Is.EqualTo(new byte[] { 5, 6 }));
         }
     }
 
@@ -164,13 +165,13 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync();
         // image present alongside html: an image copy wins outright, rich/text are not carried
-        sync.SetClipboard(new ClipboardSnapshot("t", null, Image, Html: "<b>x</b>"));
+        sync.SetClipboard(Snapshot("t", null, Image, Html: "<b>x</b>"));
         var result = ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.ImagePng, Is.EqualTo(Image));
-            Assert.That(result.Html, Is.Null);
-            Assert.That(result.Text, Is.Null);
+            Assert.That(result.Clipboard.Png, Is.EqualTo(Image));
+            Assert.That(result.Clipboard.Html, Is.Null);
+            Assert.That(result.Clipboard.Text, Is.Null);
         }
     }
 
@@ -178,13 +179,13 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_UsesFallbackWhenEverythingEchoSuppressed()
     {
         var sync = new FakeClipboardSync(); // Read reads nothing
-        var fallback = new ClipboardSnapshot("ft", null, null, Html: "<i>fh</i>", Rtf: [1]);
+        var fallback = Snapshot("ft", null, null, Html: "<i>fh</i>", Rtf: [1]).Clipboard;
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("ft"));
-            Assert.That(result.Html, Is.EqualTo("<i>fh</i>"));
-            Assert.That(result.Rtf, Is.EqualTo(new byte[] { 1 }));
+            Assert.That(result.Clipboard.Text, Is.EqualTo("ft"));
+            Assert.That(result.Clipboard.Html, Is.EqualTo("<i>fh</i>"));
+            Assert.That(result.Clipboard.Rtf, Is.EqualTo(new byte[] { 1 }));
         }
     }
 
@@ -192,22 +193,22 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_FileClipboard_DoesNotResurrectFallback()
     {
         var sync = new FakeClipboardSync { HasFileClipboardValue = true };
-        var fallback = new ClipboardSnapshot("stale", null, null);
+        var fallback = Snapshot("stale", null, null).Clipboard;
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot(null, null, null)));
+        Assert.That(result, Is.EqualTo(Snapshot(null, null, null)));
     }
 
     [Test]
     public void ReadWithFallback_ExternalOwner_DoesNotResurrectFallback()
     {
         var sync = new FakeClipboardSync { StillHoldsValue = false };
-        var fallback = new ClipboardSnapshot("stale", null, null);
+        var fallback = Snapshot("stale", null, null).Clipboard;
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot(null, null, null)));
+        Assert.That(result, Is.EqualTo(Snapshot(null, null, null)));
     }
 
     [Test]
@@ -220,8 +221,8 @@ public class ClipboardUtilsRichTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("hunter2"));
-            Assert.That(result.Concealed, Is.True);
+            Assert.That(result.Clipboard.Text, Is.EqualTo("hunter2"));
+            Assert.That(result.Clipboard.Secret, Is.True);
         }
     }
 
@@ -231,21 +232,21 @@ public class ClipboardUtilsRichTests
         var sync = new FakeClipboardSync();
         sync.SetupText("plain");
 
-        Assert.That(ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.Concealed, Is.False);
+        Assert.That(ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.Clipboard.Secret, Is.False);
     }
 
     [Test]
     public void ReadWithFallback_EchoFallback_KeepsTheFallbacksConcealed()
     {
         var sync = new FakeClipboardSync(); // Read reads nothing: Hydra's own write, echo-suppressed
-        var fallback = new ClipboardSnapshot("hunter2", null, null, Concealed: true);
+        var fallback = Snapshot("hunter2", null, null, Concealed: true).Clipboard;
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.EqualTo("hunter2"));
-            Assert.That(result.Concealed, Is.True);
+            Assert.That(result.Clipboard.Text, Is.EqualTo("hunter2"));
+            Assert.That(result.Clipboard.Secret, Is.True);
         }
     }
 
@@ -253,9 +254,9 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_ExternalOwner_DoesNotTakeTheFallbacksConcealed()
     {
         var sync = new FakeClipboardSync { StillHoldsValue = false };
-        var fallback = new ClipboardSnapshot("hunter2", null, null, Concealed: true);
+        var fallback = Snapshot("hunter2", null, null, Concealed: true).Clipboard;
 
-        Assert.That(ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.Concealed, Is.False);
+        Assert.That(ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.Clipboard.Secret, Is.False);
     }
 
     // -- primary selection: a selection of its own, beside the clipboard --
@@ -264,15 +265,15 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_ImageCopy_KeepsThePrimary()
     {
         var sync = new FakeClipboardSync();
-        sync.SetClipboard(new ClipboardSnapshot("alt text", "selection", Image));
+        sync.SetClipboard(Snapshot("alt text", "selection", Image));
 
         var result = ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.Text, Is.Null);
-            Assert.That(result.PrimaryText, Is.EqualTo("selection"));
-            Assert.That(result.ImagePng, Is.EqualTo(Image));
+            Assert.That(result.Clipboard.Text, Is.Null);
+            Assert.That(result.Selection, Is.EqualTo("selection"));
+            Assert.That(result.Clipboard.Png, Is.EqualTo(Image));
         }
     }
 
@@ -282,14 +283,14 @@ public class ClipboardUtilsRichTests
         // the clipboard comes from the fallback, the selection never does
         var sync = new FakeClipboardSync();
         sync.SetPrimaryText("current selection");
-        var fallback = new ClipboardSnapshot(null, "older selection", Image);
+        var fallback = Snapshot(null, "older selection", Image).Clipboard;
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.PrimaryText, Is.EqualTo("current selection"));
-            Assert.That(result.ImagePng, Is.EqualTo(Image));
+            Assert.That(result.Selection, Is.EqualTo("current selection"));
+            Assert.That(result.Clipboard.Png, Is.EqualTo(Image));
         }
     }
 
@@ -297,11 +298,11 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_NoSelection_DoesNotTakeTheFallbacks()
     {
         var sync = new FakeClipboardSync();
-        var fallback = new ClipboardSnapshot("echoed", "older selection", null);
+        var fallback = Snapshot("echoed", "older selection", null).Clipboard;
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot("echoed", null, null)));
+        Assert.That(result, Is.EqualTo(Snapshot("echoed", null, null)));
     }
 
     [Test]
@@ -312,7 +313,7 @@ public class ClipboardUtilsRichTests
 
         var result = ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!;
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+        Assert.That(result, Is.EqualTo(Snapshot(null, "selection", null)));
     }
 
     [Test]
@@ -320,9 +321,9 @@ public class ClipboardUtilsRichTests
     {
         var text = new string('a', (int)(ClipboardUtils.MaxClipboardBytes / 2) + 1);
 
-        var result = ClipboardUtils.TrimToFit(text, text, null, "<b>rich</b>", null, Log, "trim");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents(text, "<b>rich</b>", null, null, false), text, Log, "trim");
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot(text, text, null, Html: "<b>rich</b>")));
+        Assert.That(result, Is.EqualTo(Snapshot(text, text, null, Html: "<b>rich</b>")));
     }
 
     [Test]
@@ -332,12 +333,12 @@ public class ClipboardUtilsRichTests
         var selection = new string('s', (int)(ClipboardUtils.MaxClipboardBytes / 2) + 1);
         var image = new byte[ClipboardUtils.MaxClipboardBytes / 2];
 
-        var result = ClipboardUtils.TrimToFit(null, selection, image, null, null, Log, "trim");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents(null, null, null, image, false), selection, Log, "trim");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result.ImagePng, Is.SameAs(image));
-            Assert.That(result.PrimaryText, Is.Null);
+            Assert.That(result.Clipboard.Png, Is.SameAs(image));
+            Assert.That(result.Selection, Is.Null);
         }
     }
 
@@ -346,9 +347,9 @@ public class ClipboardUtilsRichTests
     {
         var image = new byte[ClipboardUtils.MaxClipboardBytes + 1];
 
-        var result = ClipboardUtils.TrimToFit(null, "selection", image, null, null, Log, "trim");
+        var result = ClipboardUtils.TrimToFit(new ClipboardContents(null, null, null, image, false), "selection", Log, "trim");
 
-        Assert.That(result, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+        Assert.That(result, Is.EqualTo(Snapshot(null, "selection", null)));
     }
 
     [Test]
@@ -357,11 +358,11 @@ public class ClipboardUtilsRichTests
         var sync = new FakeClipboardSync();
         sync.SetupText("local copy");
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot(null, "selection", null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot(null, "selection", null), Log, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(applied, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+            Assert.That(applied, Is.EqualTo(new Applied.SelectionAlone("selection")));
             Assert.That(sync.Text, Is.EqualTo("local copy"));
             Assert.That(sync.PrimaryText, Is.EqualTo("selection"));
         }
@@ -372,7 +373,9 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync { WriteFailsValue = true, KeepsSelectionValue = false };
 
-        Assert.That(ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("incoming", "selection", null), Log, "test"), Is.Null);
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("incoming", "selection", null), Log, "test");
+
+        Assert.That(applied, Is.InstanceOf<Applied.Failed>().With.Property(nameof(Applied.Failed.Kept)).Null);
     }
 
     [Test]
@@ -380,21 +383,21 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync { WriteFailsValue = true };
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("incoming", "selection", null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("incoming", "selection", null), Log, "test");
 
-        Assert.That(applied, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+        Assert.That((applied as Applied.Failed)?.Kept, Is.EqualTo(new Applied.SelectionAlone("selection")));
     }
 
     [Test]
-    public void ApplyPreservingFiles_ConcealedMarkersRefused_ReportsOnlyTheSelection()
+    public void ApplyPreservingFiles_ConcealedMarkersRefused_IsEmptied_KeepingOnlyTheSelection()
     {
         var sync = new FakeClipboardSync { RefusesMarkersValue = true };
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("secret", "selection", null, Concealed: true), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("secret", "selection", null, Concealed: true), Log, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(applied, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+            Assert.That((applied as Applied.Emptied)?.Known, Is.EqualTo(Snapshot(null, "selection", null)));
             Assert.That(sync.Text, Is.Null);
         }
     }
@@ -404,7 +407,9 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync();
 
-        Assert.That(ClipboardUtils.ApplyPreservingFiles(sync, ClipboardSnapshot.Placeholder, Log, "test"), Is.EqualTo(ClipboardSnapshot.Placeholder));
+        var placeholder = Snapshot(ClipboardUtils.PlaceholderText, null, null);
+
+        Assert.That((ClipboardUtils.ApplyPreservingFiles(sync, placeholder, Log, "test") as Applied.Emptied)?.Known, Is.EqualTo(placeholder));
     }
 
     [Test]
@@ -413,7 +418,7 @@ public class ClipboardUtilsRichTests
         var sync = new FakeClipboardSync { HasFileClipboardValue = true };
         sync.SetPrimaryText(OversizedText());
 
-        Assert.That(ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.PrimaryText, Is.Null);
+        Assert.That(ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read")!.Selection, Is.Null);
     }
 
     [Test]
@@ -421,11 +426,11 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync { HasFileClipboardValue = true };
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("incoming", "selection", null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("incoming", "selection", null), Log, "test");
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(applied, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)), "only the selection was applied");
+            Assert.That(applied, Is.EqualTo(new Applied.SelectionAlone("selection")), "only the selection was applied");
             Assert.That(sync.SetClipboardCallCount, Is.Zero);
             Assert.That(sync.PrimaryText, Is.EqualTo("selection"));
         }
@@ -436,7 +441,7 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync { HasFileClipboardValue = true };
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot(null, "selection", null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot(null, "selection", null), Log, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -450,7 +455,7 @@ public class ClipboardUtilsRichTests
     {
         var sync = new FakeClipboardSync { HasFileClipboardValue = true };
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("incoming", null, null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("incoming", null, null), Log, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -465,7 +470,7 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_Unreadable_IsUnknownNotEmpty()
     {
         var sync = new FakeClipboardSync { ReadFailsValue = true };
-        var fallback = new ClipboardSnapshot("echoed", null, null);
+        var fallback = Snapshot("echoed", null, null).Clipboard;
 
         Assert.That(ClipboardUtils.ReadWithFallback(sync, fallback, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read"), Is.Null);
     }
@@ -475,7 +480,7 @@ public class ClipboardUtilsRichTests
     public void ReadWithFallback_MarkedPlaceholder_IsNeitherContentNorConcealed()
     {
         var sync = new FakeClipboardSync { StillHoldsValue = false, ConcealedValue = true };
-        sync.SetupText(ClipboardSnapshot.PlaceholderText);
+        sync.SetupText(ClipboardUtils.PlaceholderText);
 
         Assert.That(ClipboardUtils.ReadWithFallback(sync, null, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read"), Is.EqualTo(ClipboardSnapshot.Empty));
     }
@@ -489,7 +494,7 @@ public class ClipboardUtilsRichTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(result, Is.EqualTo(new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>", Concealed: true)));
+            Assert.That(result, Is.EqualTo(Snapshot("plain", null, null, Html: "<b>rich</b>", Concealed: true)));
             Assert.That(sync.Reads, Is.EqualTo(1));
         }
     }
@@ -499,7 +504,7 @@ public class ClipboardUtilsRichTests
     {
         var sync = new SnapshotOnlySync(new ClipboardRead.Files());
 
-        Assert.That(ClipboardUtils.ReadWithFallback(sync, new ClipboardSnapshot("stale", null, null), ClipboardChanges.Of(sync.Clipboard).Last, Log, "read"), Is.EqualTo(ClipboardSnapshot.Empty));
+        Assert.That(ClipboardUtils.ReadWithFallback(sync, Snapshot("stale", null, null).Clipboard, ClipboardChanges.Of(sync.Clipboard).Last, Log, "read"), Is.EqualTo(ClipboardSnapshot.Empty));
     }
 
     // a platform whose one read is Read, as Windows reads under one open; asking it for files apart fails the test
@@ -550,9 +555,9 @@ public class ClipboardUtilsRichTests
         var sync = new FakeClipboardSync();
         sync.RefusedFormats.Add(ClipboardFormat.Rtf);
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("plain", null, null, Html: "<b>x</b>", Rtf: [7]), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("plain", null, null, Html: "<b>x</b>", Rtf: [7]), Log, "test");
 
-        Assert.That(applied, Is.EqualTo(new ClipboardSnapshot("plain", null, null, Html: "<b>x</b>")));
+        Assert.That((applied as Applied.Copy)?.Write.Taken, Is.EqualTo(Snapshot("plain", null, null, Html: "<b>x</b>").Clipboard));
     }
 
     [Test]
@@ -561,8 +566,8 @@ public class ClipboardUtilsRichTests
         var sync = new FakeClipboardSync();
         sync.RefusedFormats.Add(ClipboardFormat.Text);
 
-        var applied = ClipboardUtils.ApplyPreservingFiles(sync, new ClipboardSnapshot("plain", "selection", null), Log, "test");
+        var applied = ClipboardUtils.ApplyPreservingFiles(sync, Snapshot("plain", "selection", null), Log, "test");
 
-        Assert.That(applied, Is.EqualTo(new ClipboardSnapshot(null, "selection", null)));
+        Assert.That((applied as Applied.Failed)?.Kept, Is.EqualTo(new Applied.SelectionAlone("selection")));
     }
 }

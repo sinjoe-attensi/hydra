@@ -35,8 +35,8 @@ public sealed class ClipboardChanges
         return result;
     }
 
-    // whether it replaced the clipboard
-    public bool Write(Func<ClipboardWrite> write) => Write(write, w => w as ClipboardWrite.Written) is ClipboardWrite.Written;
+    // the write, where it replaced the clipboard
+    public ClipboardWrite.Written? Write(Func<ClipboardWrite> write) => Write(write, w => w as ClipboardWrite.Written) as ClipboardWrite.Written;
 
     // whether the user copied since at: the version moved past it and past Hydra's own last write; null when the platform
     // keeps no counter, or kept none at

@@ -107,7 +107,7 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
             return false;
         }
         _seen = at;
-        if (copy is SelectionRead.Text { Value: var text } && !ClipboardSnapshot.IsPlaceholder(text, null, null, null)) _current = text;
+        if (copy is SelectionRead.Text { Value: var text } && text != ClipboardUtils.PlaceholderText) _current = text;
         return true;
     }
 
