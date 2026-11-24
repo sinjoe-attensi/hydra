@@ -44,7 +44,7 @@ public abstract class CopiedPrimaryContract
         var start = Hydra.ChangeCount();
         Hydra.SetClipboard(new ClipboardSnapshot("written", null, null));
         var afterWrite = Hydra.ChangeCount();
-        _otherApp.ReadAll();
+        _otherApp.Read().AsContents();
         var afterPaste = Hydra.ChangeCount();
         OtherAppCopies("written");
         var afterCopy = Hydra.ChangeCount();
@@ -90,7 +90,7 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(Hydra.ReadAll().Text, Is.Null);
+            Assert.That(Hydra.Read().AsContents().Text, Is.Null);
             Assert.That(Hydra.CanUseEchoFallback(), Is.True);
         }
     }
@@ -102,7 +102,7 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(Hydra.ReadAll().Text, Is.EqualTo("written"));
+            Assert.That(Hydra.Read().AsContents().Text, Is.EqualTo("written"));
             Assert.That(Hydra.CanUseEchoFallback(), Is.False);
         }
     }
@@ -110,9 +110,9 @@ public abstract class CopiedPrimaryContract
     [Test]
     public void OwnWrite_LeavesTheRelayedSelection()
     {
-        HydraWritesThen(() => _otherApp.ReadAll()); // another app pasting it is no copy
+        HydraWritesThen(() => _otherApp.Read().AsContents()); // another app pasting it is no copy
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -120,7 +120,7 @@ public abstract class CopiedPrimaryContract
     {
         HydraWritesThen(() => OtherAppCopies("copied"));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("copied"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -128,7 +128,7 @@ public abstract class CopiedPrimaryContract
     {
         HydraWritesThen(() => OtherAppCopies("written"));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("written"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("written"));
     }
 
     [Test]
@@ -136,7 +136,7 @@ public abstract class CopiedPrimaryContract
     {
         HydraWritesThen(() => OtherAppCopies("text beside the image", Png));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -148,12 +148,12 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_otherApp.ReadAll().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
-            Assert.That(_otherApp.ReadAll().ImagePng, Is.Null);
+            Assert.That(_otherApp.Read().AsContents().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
+            Assert.That(_otherApp.Read().AsContents().Png, Is.Null);
             Assert.That(Hydra.CanUseEchoFallback(), Is.True);
             Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test")!.HasClipboard, Is.False);
-            Assert.That(_otherApp.GetPrimaryText(), Is.Not.EqualTo(ClipboardSnapshot.PlaceholderText), "the placeholder is never a text copy");
-            Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("relayed selection"));
+            Assert.That(_otherApp.ReadPrimary().TextOrNone(), Is.Not.EqualTo(ClipboardSnapshot.PlaceholderText), "the placeholder is never a text copy");
+            Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
         }
     }
 
@@ -188,8 +188,8 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(Hydra.ReadAll().Text, Is.EqualTo("copied first"));
-            Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("selected later"));
+            Assert.That(Hydra.Read().AsContents().Text, Is.EqualTo("copied first"));
+            Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("selected later"));
         }
     }
 
@@ -201,7 +201,7 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_otherApp.ReadAll().Concealed, Is.True);
+            Assert.That(_otherApp.Read().AsContents().Secret, Is.True);
             Assert.That(read?.Text, Is.EqualTo("hunter2"));
             Assert.That(read?.Concealed, Is.True);
         }
@@ -214,7 +214,7 @@ public abstract class CopiedPrimaryContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_otherApp.ReadAll().Concealed, Is.False);
+            Assert.That(_otherApp.Read().AsContents().Secret, Is.False);
             Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, NullLogger.Instance, "test")!.Concealed, Is.False);
         }
     }

@@ -21,7 +21,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("secret", format, value));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -29,7 +29,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("copied", "CanIncludeInClipboardHistory", 1));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("copied"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -46,7 +46,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
         {
             Assert.That(applied, Is.Null);
             Assert.That(Hydra.HasFileClipboard(), Is.True);
-            Assert.That(Hydra.ReadAll().Text, Is.Null);
+            Assert.That(Hydra.Read().AsContents().Text, Is.Null);
         }
     }
 
@@ -70,7 +70,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
 
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(() => Hydra.ReadAll(), Throws.TypeOf<ClipboardUnreadableException>(), "unknown, never empty or \"not concealed\"");
+                Assert.That(Hydra.Read(), Is.InstanceOf<ClipboardRead.Unreadable>(), "unknown, never empty or \"not concealed\"");
                 Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test"), Is.Null);
             }
         }
@@ -111,7 +111,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
         Hydra.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Html: "<b>hunter2</b>", Concealed: true));
         using var otherApp = (WindowsClipboardSync)Create();
 
-        Assert.That(otherApp.ReadAll(), Is.EqualTo(new ClipboardRead("hunter2", null, "<b>hunter2</b>", null, Concealed: true)));
+        Assert.That(otherApp.Read().AsContents(), Is.EqualTo(new ClipboardContents("hunter2", "<b>hunter2</b>", null, null, Secret: true)));
     }
 
     [Test]
@@ -121,17 +121,17 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
         Hydra.SetClipboard(new ClipboardSnapshot("hunter2", null, Png, Html: "<b>hunter2</b>", Rtf: rtf));
         using var otherApp = (WindowsClipboardSync)Create();
 
-        var all = otherApp.ReadAll();
+        var all = otherApp.Read().AsContents();
 
         // field by field, as the record compares its byte arrays by reference
         using (Assert.EnterMultipleScope())
         {
             Assert.That(all.Text, Is.EqualTo("hunter2"));
-            Assert.That(all.ImagePng, Is.EqualTo(Png));
+            Assert.That(all.Png, Is.EqualTo(Png));
             Assert.That(all.Html, Is.EqualTo("<b>hunter2</b>"));
             Assert.That(all.Rtf, Is.EqualTo(rtf));
-            Assert.That(all.Concealed, Is.False);
-            Assert.That(all.HasFiles, Is.EqualTo(otherApp.HasFileClipboard()).And.False);
+            Assert.That(all.Secret, Is.False);
+            Assert.That(otherApp.HasFileClipboard(), Is.False);
         }
     }
 
@@ -145,15 +145,11 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
             using var own = t % 4 == 3 ? (WindowsClipboardSync)Create() : null;
             for (var i = 0; i < 40; i++)
             {
-                try
+                if (t % 2 == 0)
                 {
-                    if (t % 2 == 0)
-                    {
-                        if (Hydra.SetClipboard(new ClipboardSnapshot($"copy {t} {i}", null, Png)) == null) Interlocked.Increment(ref failures);
-                    }
-                    else _ = (own ?? Hydra).ReadAll();
+                    if (Hydra.SetClipboard(new ClipboardSnapshot($"copy {t} {i}", null, Png)) == null) Interlocked.Increment(ref failures);
                 }
-                catch (ClipboardUnreadableException) { Interlocked.Increment(ref failures); }
+                else if ((own ?? Hydra).Read() is ClipboardRead.Unreadable) Interlocked.Increment(ref failures);
             }
         })).ToList();
 

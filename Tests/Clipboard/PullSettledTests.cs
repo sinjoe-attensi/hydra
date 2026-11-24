@@ -15,7 +15,7 @@ public class PullSettledTests
     {
         public FakeClipboardSync Inner { get; } = new();
         public List<Task> Sent { get; } = [];
-        public ClipboardRead ReadAll() => Inner.ReadAll();
+        public ClipboardRead Read() => Inner.Read();
         public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents) => Inner.SetClipboard(contents);
         public long? ChangeCount() => Inner.ChangeCount();
         public long? WroteAt() => Inner.WroteAt();

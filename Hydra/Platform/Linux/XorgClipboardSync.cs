@@ -55,7 +55,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     // XFixes' first event number, -1 without the extension, when only owner changes seen here move the counter
     private readonly int _fixesEventBase = -1;
 
-    // ReadAll synchronization — only one read in flight at a time
+    // Read synchronization — only one read in flight at a time
     private readonly Lock _getLock = new();
     // the read's state, shared by the reader and the event loop
     private readonly Lock _readLock = new();
@@ -144,42 +144,55 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     }
 
     // never echo-suppressed: the selection travels as it stands, even when Hydra set it
-    public string? GetPrimaryText()
+    public SelectionRead ReadPrimary()
     {
         lock (_dataLock)
         {
-            if (OwnsPrimary && _ownedPrimaryText != null) return _ownedPrimaryText;
+            if (OwnsPrimary && _ownedPrimaryText != null) return new SelectionRead.Text(_ownedPrimaryText);
         }
         try
         {
-            return ReadSelection(NativeMethods.XA_PRIMARY, _atomUtf8String)?.DecodeText();
+            return ReadSelection(NativeMethods.XA_PRIMARY, _atomUtf8String)?.DecodeText() is { } text
+                ? new SelectionRead.Text(text)
+                : new SelectionRead.None();
         }
-        catch (ClipboardUnreadableException)
+        catch (ClipboardUnreadableException e)
         {
-            return null; // a selection that could not be read is none, as the interface has it
+            return e.AsSelection();
         }
     }
 
     // CLIPBOARD as another client holds it, every target it lists against one owner and timestamp; nothing while we own
     // it, so our own write is never synced back, and nothing echo-filtered: what another client holds is its copy, even
     // when it equals Hydra's last write. A copy made during the read is read again, once
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
         lock (_getLock)
-            return ReadAllOnce() ?? ReadAllOnce() ?? throw new ClipboardUnreadableException("the clipboard changed while it was read, twice");
+        {
+            try
+            {
+                return (ReadAllOnce() ?? ReadAllOnce()) is { } contents
+                    ? new ClipboardRead.Contents(contents)
+                    : new ClipboardRead.Unreadable("the clipboard changed while it was read, twice");
+            }
+            catch (ClipboardUnreadableException e)
+            {
+                return e.AsRead();
+            }
+        }
     }
 
     // null when the clipboard changed during the read
-    private ClipboardRead? ReadAllOnce()
+    private ClipboardContents? ReadAllOnce()
     {
         var owner = NativeMethods.XGetSelectionOwner(_display, _atomClipboard);
-        if (owner == _window || owner == nint.Zero) return ClipboardRead.Empty;
+        if (owner == _window || owner == nint.Zero) return ClipboardContents.Empty;
         // an owner that refuses TARGETS is asked for its text alone, UTF8_STRING then STRING
         if (ReadSelection(_atomClipboard, _atomTargets) is not { } listed)
         {
             var plain = ReadSelection(_atomClipboard, _atomUtf8String);
             if (NativeMethods.XGetSelectionOwner(_display, _atomClipboard) != owner) return null;
-            return new ClipboardRead(plain?.DecodeText(), null, null, null, false);
+            return ClipboardContents.Empty with { Text = plain?.DecodeText() };
         }
         var targets = Atoms(listed.Data);
         var taken = TakenAt();
@@ -192,7 +205,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
         if (NativeMethods.XGetSelectionOwner(_display, _atomClipboard) != owner) return null;
         if (!SameTaking(stamp, taken)) return null;
 
-        return new ClipboardRead(text?.DecodeText(), image, html, null, hint.AsSpan().SequenceEqual(PasswordHintSecret));
+        return new ClipboardContents(text?.DecodeText(), html, null, image, hint.AsSpan().SequenceEqual(PasswordHintSecret));
     }
 
     // a 32-bit property's items, which Xlib hands back as longs
@@ -259,7 +272,8 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     public bool SetPrimaryText(string text)
     {
         // taking PRIMARY back with the text it already holds would clear its owner's highlight
-        if (GetPrimaryText() != text) Own(NativeMethods.XA_PRIMARY, () => _ownedPrimaryText = text);
+        // one that could not be read is taken as not holding it
+        if (ReadPrimary() is not SelectionRead.Text { Value: var held } || held != text) Own(NativeMethods.XA_PRIMARY, () => _ownedPrimaryText = text);
         return true;
     }
 
@@ -493,7 +507,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
 
     // returns the selection bytes plus whether they came from the STRING fallback, or null when the owner has no such
     // target; an owner that does not answer in time, or an answer that cannot be read, leaves it unreadable
-    private SelectionRead? ReadSelection(nint selectionAtom, nint targetAtom)
+    private SelectionData? ReadSelection(nint selectionAtom, nint targetAtom)
     {
         lock (_getLock)
         {
@@ -527,7 +541,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
                 if (!answered)
                     throw new ClipboardUnreadableException($"the selection's owner did not answer within {ClipboardTimeoutMs} ms");
                 if (_getFailed) throw new ClipboardUnreadableException("the selection's answer could not be read");
-                return _getResult is { } data ? new SelectionRead(data, _fallbackToString || targetAtom == NativeMethods.XA_STRING) : null;
+                return _getResult is { } data ? new SelectionData(data, _fallbackToString || targetAtom == NativeMethods.XA_STRING) : null;
             }
             finally
             {
@@ -768,7 +782,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     }
 
     // bytes read from a selection, plus whether they arrived via the Latin-1 STRING fallback
-    private sealed record SelectionRead(byte[] Data, bool Latin1)
+    private sealed record SelectionData(byte[] Data, bool Latin1)
     {
         public string DecodeText() => (Latin1 ? Encoding.Latin1 : Encoding.UTF8).GetString(Data);
     }

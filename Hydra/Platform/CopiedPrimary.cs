@@ -5,10 +5,10 @@ namespace Hydra.Platform;
 // X11's primary selection, kept by a platform that has none: the newest of the selections relayed here and the
 // user's text copies. The version is the OS clipboard's change counter, which only grows and says whether a copy was
 // made since Hydra last touched the clipboard; every one is read under the gate, so no write can land between it and
-// what it decides. readTextCopy returns the text of a text copy: null for one whose text only names an image or files
-// we send instead, or for a password manager's concealed copy; it throws when the clipboard cannot be read, to be
+// what it decides. readTextCopy reads the text of a text copy: none for one whose text only names an image or files
+// we send instead, or for a password manager's concealed copy; unreadable when the clipboard cannot be read, to be
 // tried again.
-public sealed class CopiedPrimary(Func<long> version, Func<string?> readTextCopy, ILogger log)
+public sealed class CopiedPrimary(Func<long> version, Func<SelectionRead> readTextCopy, ILogger log)
 {
     private readonly Lock _gate = new();
     private string? _current;
@@ -16,10 +16,13 @@ public sealed class CopiedPrimary(Func<long> version, Func<string?> readTextCopy
     private long _written = -1;
     private int _writing;
 
-    public string? Read() => Guarded("read the primary selection", null, () =>
+    private static readonly SelectionRead ReadFailed = new SelectionRead.Unreadable("the primary selection could not be read");
+
+    // unreadable only when the clipboard failed outside readTextCopy, as its version can; the failure is logged
+    public SelectionRead Read() => Guarded<SelectionRead>("read the primary selection", ReadFailed, () =>
     {
         Catch(version());
-        return _current;
+        return _current is { } current ? new SelectionRead.Text(current) : new SelectionRead.None();
     });
 
     // whether the clipboard is still what Hydra's last write left
@@ -90,19 +93,24 @@ public sealed class CopiedPrimary(Func<long> version, Func<string?> readTextCopy
     private bool Catch(long at)
     {
         if (_writing > 0 || at == _seen) return true;
-        string? text;
+        SelectionRead copy;
         try
         {
-            text = readTextCopy();
+            copy = readTextCopy();
         }
         catch (Exception ex)
         {
+            copy = new SelectionRead.Unreadable(ex.Message, ex);
+        }
+        if (copy is SelectionRead.Unreadable unreadable)
+        {
             if (log.IsEnabled(LogLevel.Debug))
-                log.LogDebug(ex, "Clipboard unreadable for the primary selection; trying again on the next read");
+                log.LogDebug(unreadable.Cause, "Clipboard unreadable for the primary selection ({Reason}); trying again on the next read",
+                    unreadable.Reason);
             return false;
         }
         _seen = at;
-        if (text != null && !ClipboardSnapshot.IsPlaceholder(text, null, null, null)) _current = text;
+        if (copy is SelectionRead.Text { Value: var text } && !ClipboardSnapshot.IsPlaceholder(text, null, null, null)) _current = text;
         return true;
     }
 

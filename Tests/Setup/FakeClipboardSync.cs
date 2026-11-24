@@ -11,7 +11,7 @@ public sealed class FakeClipboardSync : IClipboardSync
     public byte[]? Rtf { get; private set; }
     public int ReadCallCount => Volatile.Read(ref _reads);
     private int _reads;
-    public int GetPrimaryTextCallCount { get; private set; }
+    public int ReadPrimaryCallCount { get; private set; }
     public int SetClipboardCallCount { get; private set; }
     public int ClearClipboardCallCount { get; private set; }
     public bool HasFileClipboardValue { get; set; }
@@ -35,7 +35,7 @@ public sealed class FakeClipboardSync : IClipboardSync
     // a clear fails, as with the clipboard held open by another app
     public bool ClearFailsValue { get; set; }
     public bool KeepsSelectionValue { get; set; } = true;
-    // the clipboard's reads throw, as for a clipboard held open by another app
+    // the clipboard's reads are unreadable, as for a clipboard held open by another app
     public bool ReadFailsValue { get; set; }
     // the formats a write leaves out, as a clipboard refusing them does
     public HashSet<ClipboardFormat> RefusedFormats { get; } = [];
@@ -45,7 +45,7 @@ public sealed class FakeClipboardSync : IClipboardSync
     public bool HidesOwnWriteValue { get; set; }
     private bool _ownWrite;
 
-    // while held, a read parks in ReadAll until released, as against a hung clipboard owner; it returns the text it saw
+    // while held, a read parks in Read until released, as against a hung clipboard owner; it returns the text it saw
     // before parking, as a read slow to answer with an older clipboard
     public Gate ReadGate { get; } = new();
     // a read reaching the held gate, before it parks
@@ -54,23 +54,23 @@ public sealed class FakeClipboardSync : IClipboardSync
     // the clipboard carries a password manager's markers
     public bool ConcealedValue { get; set; }
 
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
-        if (HasFileClipboard()) return ClipboardRead.Files;
+        if (HasFileClipboard()) return new ClipboardRead.Files();
         Interlocked.Increment(ref _reads);
         var text = Text;
         if (ReadGate.IsHeld) ReadsParked.Push("parked");
         ReadGate.Passed().GetAwaiter().GetResult();
-        if (ReadFailsValue) throw new ClipboardUnreadableException("the fake clipboard is unreadable");
-        return new ClipboardRead(Readable(text), Readable(ImagePng), Readable(Html), Readable(Rtf), ConcealedValue);
+        if (ReadFailsValue) return new ClipboardRead.Unreadable("the fake clipboard is unreadable");
+        return new ClipboardRead.Contents(new ClipboardContents(Readable(text), Readable(Html), Readable(Rtf), Readable(ImagePng), ConcealedValue));
     }
 
     private T? Readable<T>(T? value) where T : class => HidesOwnWriteValue && _ownWrite ? null : value;
 
-    public string? GetPrimaryText()
+    public SelectionRead ReadPrimary()
     {
-        GetPrimaryTextCallCount++;
-        return PrimaryText;
+        ReadPrimaryCallCount++;
+        return PrimaryText is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
     }
 
     public bool SetPrimaryText(string text)

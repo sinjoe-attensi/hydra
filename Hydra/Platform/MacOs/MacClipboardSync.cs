@@ -43,11 +43,18 @@ public sealed class MacClipboardSync : IClipboardSync
     internal Action? DuringRead { get; set; }
 
     // every type in one pool, against one change count: a copy made during the read is read again, once
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
-        if (Guarded("clipboard", ReadAllOnce) is { } first) return first;
-        if (_log.IsEnabled(LogLevel.Debug)) _log.LogDebug("The pasteboard changed while it was read; reading it again");
-        return Guarded("clipboard", ReadAllOnce) ?? throw new ClipboardUnreadableException("the pasteboard changed while it was read, twice");
+        try
+        {
+            if (Guarded("clipboard", ReadAllOnce) is { } first) return first;
+            if (_log.IsEnabled(LogLevel.Debug)) _log.LogDebug("The pasteboard changed while it was read; reading it again");
+            return Guarded("clipboard", ReadAllOnce) ?? new ClipboardRead.Unreadable("the pasteboard changed while it was read, twice");
+        }
+        catch (ClipboardUnreadableException e)
+        {
+            return e.AsRead();
+        }
     }
 
     // null when the pasteboard changed during the read
@@ -55,15 +62,19 @@ public sealed class MacClipboardSync : IClipboardSync
     {
         var before = ChangeCount(pasteboard);
         var types = PasteboardTypes(pasteboard).ToList();
-        var read = types.Any(t => FileTypes.Contains(t)) ? ClipboardRead.Files : ReadFormats(pasteboard, types);
+        ClipboardRead read = types.Any(t => FileTypes.Contains(t)) ? new ClipboardRead.Files() : ReadFormats(pasteboard, types);
         DuringRead?.Invoke();
         return ChangeCount(pasteboard) == before ? read : null;
     }
 
-    private ClipboardRead ReadFormats(nint pasteboard, List<string?> types) =>
-        new(_echo.FilterText(ReadString(pasteboard, PasteboardTypeString)), _echo.FilterImage(ReadData(pasteboard, PasteboardTypePng)),
-            _echo.FilterHtml(ReadString(pasteboard, PasteboardTypeHtml)), _echo.FilterRtf(ReadData(pasteboard, PasteboardTypeRtf)),
-            types.Any(t => ConcealedTypes.Contains(t)));
+    private ClipboardRead.Contents ReadFormats(nint pasteboard, List<string?> types)
+    {
+        var text = _echo.FilterText(ReadString(pasteboard, PasteboardTypeString));
+        var png = _echo.FilterImage(ReadData(pasteboard, PasteboardTypePng));
+        var html = _echo.FilterHtml(ReadString(pasteboard, PasteboardTypeHtml));
+        var rtf = _echo.FilterRtf(ReadData(pasteboard, PasteboardTypeRtf));
+        return new ClipboardRead.Contents(new ClipboardContents(text, html, rtf, png, types.Any(t => ConcealedTypes.Contains(t))));
+    }
 
     // one read of the general pasteboard in its own pool; unreadable when there is none or the read fails
     private T Guarded<T>(string what, Func<nint, T> read)
@@ -104,8 +115,10 @@ public sealed class MacClipboardSync : IClipboardSync
     }
 
     // CopiedPrimary's readTextCopy, by pasteboard type
-    private static string? ReadTextCopy(nint pasteboard) =>
-        PasteboardTypes(pasteboard).Any(t => NotTextCopyTypes.Contains(t)) ? null : ReadString(pasteboard, PasteboardTypeString);
+    private static SelectionRead ReadTextCopy(nint pasteboard) =>
+        !PasteboardTypes(pasteboard).Any(t => NotTextCopyTypes.Contains(t)) && ReadString(pasteboard, PasteboardTypeString) is { } text
+            ? new SelectionRead.Text(text)
+            : new SelectionRead.None();
 
     private static long ChangeCount(nint pasteboard) => NativeMethods.objc_msgSend_long(pasteboard, NativeMethods.sel_registerName("changeCount"));
 
@@ -120,7 +133,7 @@ public sealed class MacClipboardSync : IClipboardSync
     // the count Hydra's last write left, as the write saw it
     public long? WroteAt() => _primary.WrittenAt();
 
-    public string? GetPrimaryText()
+    public SelectionRead ReadPrimary()
     {
         using var pool = new ObjcAutoreleasePool();
         return _primary.Read();
@@ -166,7 +179,7 @@ public sealed class MacClipboardSync : IClipboardSync
         return all;
     }
 
-    // no files when the pasteboard cannot be read: ReadAll says it is unreadable
+    // no files when the pasteboard cannot be read: Read says it is unreadable
     public bool HasFileClipboard()
     {
         try

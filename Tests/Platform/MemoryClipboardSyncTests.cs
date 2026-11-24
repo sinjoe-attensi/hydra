@@ -1,4 +1,5 @@
 using Hydra.Platform;
+using Tests.Setup;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Tests.Platform;
@@ -19,7 +20,7 @@ public class MemoryClipboardSyncTests
         {
             Assert.That(cleared, Is.True);
             Assert.That(ClipboardUtils.ReadWithFallback(clipboard, null, NullLogger.Instance, "test")?.HasClipboard, Is.False);
-            Assert.That(clipboard.GetPrimaryText(), Is.EqualTo("selected"));
+            Assert.That(clipboard.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
             Assert.That(clipboard.ChangeCount(), Is.EqualTo(afterCopy + 1));
         }
     }

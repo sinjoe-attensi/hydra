@@ -9,16 +9,16 @@ public sealed class MemoryClipboardSync : IClipboardSync
     private string? _primary;
     private long _changes;
 
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
         lock (_lock)
-            return new ClipboardRead(_contents.Text, _contents.ImagePng, _contents.Html, _contents.Rtf, _contents.Concealed);
+            return new ClipboardRead.Contents(new ClipboardContents(_contents.Text, _contents.Html, _contents.Rtf, _contents.ImagePng, _contents.Concealed));
     }
 
-    public string? GetPrimaryText()
+    public SelectionRead ReadPrimary()
     {
         lock (_lock)
-            return _primary;
+            return _primary is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
     }
 
     public bool SetPrimaryText(string text)

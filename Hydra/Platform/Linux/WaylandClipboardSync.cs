@@ -8,7 +8,7 @@ namespace Hydra.Platform.Linux;
 // compositor's data-control protocol and so needs no focused window.
 //
 // Each write is a wl-copy kept in the foreground: it serves the clipboard until another client copies, then exits, so
-// while it runs the clipboard is still Hydra's write (and ReadAll answers nothing, as X11 does for its own selection).
+// while it runs the clipboard is still Hydra's write (and Read answers nothing, as X11 does for its own selection).
 // wl-copy offers one MIME type per process, so a write keeps the text when there is any, else the image; the formats
 // left out are reported as refused. No change counter: wl-paste --watch could follow the owners, but hashes decide
 // where a platform keeps none.
@@ -32,34 +32,43 @@ internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
         (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries)
             .Any(dir => File.Exists(Path.Combine(dir, name)));
 
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
-        if (OwnsClipboard()) return ClipboardRead.Empty;
+        if (OwnsClipboard()) return new ClipboardRead.Contents(ClipboardContents.Empty);
 
-        var listed = Run(["--list-types"]);
-        if (listed == null) return ClipboardRead.Empty;   // nothing copied
-        var types = Encoding.UTF8.GetString(listed).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        try
+        {
+            var listed = Run(["--list-types"]);
+            if (listed == null) return new ClipboardRead.Contents(ClipboardContents.Empty);   // nothing copied
+            var types = Encoding.UTF8.GetString(listed).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
 
-        return WaylandMime.ReadOffered(types, (type, _) => Run(type == WaylandMime.Png ? ["-t", type] : ["-n", "-t", type]), _log);
+            return new ClipboardRead.Contents(
+                WaylandMime.ReadOffered(types, (type, _) => Run(type == WaylandMime.Png ? ["-t", type] : ["-n", "-t", type]), _log));
+        }
+        catch (ClipboardUnreadableException e)
+        {
+            return e.AsRead();
+        }
     }
 
     // never echo-suppressed: the selection travels as it stands, even when Hydra set it
-    public string? GetPrimaryText()
+    public SelectionRead ReadPrimary()
     {
         try
         {
-            return Run(["-p", "-n"]) is { } bytes ? Encoding.UTF8.GetString(bytes) : null;
+            return Run(["-p", "-n"]) is { } bytes ? new SelectionRead.Text(Encoding.UTF8.GetString(bytes)) : new SelectionRead.None();
         }
-        catch (ClipboardUnreadableException)
+        catch (ClipboardUnreadableException e)
         {
-            return null;   // a selection that could not be read is none
+            return e.AsSelection();
         }
     }
 
     public bool SetPrimaryText(string text)
     {
-        // taking the selection back with the text it already holds would clear its owner's highlight
-        if (GetPrimaryText() == text) return true;
+        // taking the selection back with the text it already holds would clear its owner's highlight; one that could not
+        // be read is taken as not holding it
+        if (ReadPrimary() is SelectionRead.Text { Value: var held } && held == text) return true;
         // a failed copy leaves the old owner serving, so the selection is not lost with it
         if (Copy(["-p"], Encoding.UTF8.GetBytes(text)) is not { } process) return false;
         lock (_lock)

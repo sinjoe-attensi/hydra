@@ -68,13 +68,25 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
 
     // every format and the markers under one open of the clipboard, so no copy lands between them, echo-filtered and
     // converted after the clipboard is closed
-    public ClipboardRead ReadAll()
+    public ClipboardRead Read()
     {
-        var raw = WithClipboard(() => HasFileClipboard()
-            ? null
-            : new RawRead(ReadOpenText(), ReadOpenImage(), ReadOpenHtml(), ReadOpenRtf(), IsOpenConcealed()));
-        if (raw == null) return ClipboardRead.Files;
-        return new ClipboardRead(_echo.FilterText(raw.Text), ToPng(raw.Image), ToHtml(raw.Html), _echo.FilterRtf(raw.Rtf), raw.Concealed);
+        RawRead? raw;
+        try
+        {
+            raw = WithClipboard(() => HasFileClipboard()
+                ? null
+                : new RawRead(ReadOpenText(), ReadOpenImage(), ReadOpenHtml(), ReadOpenRtf(), IsOpenConcealed()));
+        }
+        catch (ClipboardUnreadableException e)
+        {
+            return e.AsRead();
+        }
+        if (raw == null) return new ClipboardRead.Files();
+        var text = _echo.FilterText(raw.Text);
+        var png = ToPng(raw.Image);
+        var html = ToHtml(raw.Html);
+        var rtf = _echo.FilterRtf(raw.Rtf);
+        return new ClipboardRead.Contents(new ClipboardContents(text, html, rtf, png, raw.Concealed));
     }
 
     private static string? ReadOpenText()
@@ -95,9 +107,18 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
     }
 
     // CopiedPrimary's readTextCopy, by clipboard format; one attempt, since it runs under CopiedPrimary's gate
-    private string? ReadTextCopy() =>
-        WithClipboard(() => NotTextCopyFormats.Any(NativeMethods.IsClipboardFormatAvailable) || IsOpenConcealed() ? null : ReadOpenText(),
-            tries: 1);
+    private SelectionRead ReadTextCopy()
+    {
+        try
+        {
+            return WithClipboard(() => NotTextCopyFormats.Any(NativeMethods.IsClipboardFormatAvailable) || IsOpenConcealed() ? null : ReadOpenText(),
+                tries: 1) is { } text ? new SelectionRead.Text(text) : new SelectionRead.None();
+        }
+        catch (ClipboardUnreadableException e)
+        {
+            return e.AsSelection();
+        }
+    }
 
     // a password manager's markers, on a clipboard the caller opened
     private static bool IsOpenConcealed() =>
@@ -111,7 +132,7 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         return allowed is { Length: >= 4 } && BitConverter.ToUInt32(allowed) == 0;
     }
 
-    public string? GetPrimaryText() => _primary.Read();
+    public SelectionRead ReadPrimary() => _primary.Read();
 
     public bool SetPrimaryText(string text) => _primary.Relay(text);
 

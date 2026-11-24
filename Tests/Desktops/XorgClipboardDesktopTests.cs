@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Hydra.Platform.Linux;
+using Tests.Setup;
 
 namespace Tests.Desktops;
 
@@ -49,7 +50,7 @@ public sealed partial class XorgClipboardDesktopTests
         await _probe!.Command(new { copy = text }, "copied");
         using var sync = new XorgClipboardSync();
 
-        Assert.That(sync.ReadAll().Text, Is.EqualTo(text));
+        Assert.That(sync.Read().AsContents().Text, Is.EqualTo(text));
     }
 
     [Test]
@@ -57,12 +58,12 @@ public sealed partial class XorgClipboardDesktopTests
     {
         await _probe!.Command(new { copy = "first" }, "copied");
         using var sync = new XorgClipboardSync();
-        sync.ReadAll();
+        sync.Read().AsContents();
 
         var text = "again-" + Guid.NewGuid();
         await _probe.Command(new { copy = text }, "copied");
 
-        Assert.That(sync.ReadAll().Text, Is.EqualTo(text));
+        Assert.That(sync.Read().AsContents().Text, Is.EqualTo(text));
     }
 
     [LibraryImport("libc", EntryPoint = "setenv", StringMarshalling = StringMarshalling.Utf8)]

@@ -177,7 +177,7 @@ public class ClipboardUtilsRichTests
     [Test]
     public void ReadWithFallback_UsesFallbackWhenEverythingEchoSuppressed()
     {
-        var sync = new FakeClipboardSync(); // ReadAll reads nothing
+        var sync = new FakeClipboardSync(); // Read reads nothing
         var fallback = new ClipboardSnapshot("ft", null, null, Html: "<i>fh</i>", Rtf: [1]);
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, Log, "read")!;
         using (Assert.EnterMultipleScope())
@@ -237,7 +237,7 @@ public class ClipboardUtilsRichTests
     [Test]
     public void ReadWithFallback_EchoFallback_KeepsTheFallbacksConcealed()
     {
-        var sync = new FakeClipboardSync(); // ReadAll reads nothing: Hydra's own write, echo-suppressed
+        var sync = new FakeClipboardSync(); // Read reads nothing: Hydra's own write, echo-suppressed
         var fallback = new ClipboardSnapshot("hunter2", null, null, Concealed: true);
 
         var result = ClipboardUtils.ReadWithFallback(sync, fallback, Log, "read")!;
@@ -483,7 +483,7 @@ public class ClipboardUtilsRichTests
     [Test]
     public void ReadWithFallback_TakesOneReadOfEveryFormat()
     {
-        var sync = new SnapshotOnlySync(new ClipboardRead("plain", null, "<b>rich</b>", null, Concealed: true));
+        var sync = new SnapshotOnlySync(new ClipboardRead.Contents(new ClipboardContents("plain", "<b>rich</b>", null, null, Secret: true)));
 
         var result = ClipboardUtils.ReadWithFallback(sync, null, Log, "read");
 
@@ -497,23 +497,23 @@ public class ClipboardUtilsRichTests
     [Test]
     public void ReadWithFallback_FilesInTheOneRead_AreLeftAlone()
     {
-        var sync = new SnapshotOnlySync(ClipboardRead.Files);
+        var sync = new SnapshotOnlySync(new ClipboardRead.Files());
 
         Assert.That(ClipboardUtils.ReadWithFallback(sync, new ClipboardSnapshot("stale", null, null), Log, "read"), Is.EqualTo(ClipboardSnapshot.Empty));
     }
 
-    // a platform whose one read is ReadAll, as Windows reads under one open; asking it for files apart fails the test
+    // a platform whose one read is Read, as Windows reads under one open; asking it for files apart fails the test
     private sealed class SnapshotOnlySync(ClipboardRead read) : IClipboardSync
     {
         public int Reads { get; private set; }
 
-        public ClipboardRead ReadAll()
+        public ClipboardRead Read()
         {
             Reads++;
             return read;
         }
 
-        public bool HasFileClipboard() => throw new AssertionException("read outside ReadAll");
+        public bool HasFileClipboard() => throw new AssertionException("read outside Read");
         public bool CanUseEchoFallback() => false;
         public ClipboardSnapshot SetClipboard(ClipboardSnapshot contents) => contents;
     }

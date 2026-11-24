@@ -10,8 +10,10 @@ public sealed record ClipboardBaseline(ulong? Hash, string? Text, string? Primar
 {
     public static ClipboardBaseline Of(ClipboardSnapshot s) => new(ClipboardUtils.ClipboardHash(s), s.Text, s.PrimaryText);
 
-    // the selection alone, against a peer that offers no clipboard, so this host's need not be read
-    public static ClipboardBaseline SelectionOf(IClipboardSync sync) => new(null, null, sync.GetPrimaryText());
+    // the selection alone, against a peer that offers no clipboard, so this host's need not be read; one that could not be
+    // read is none
+    public static ClipboardBaseline SelectionOf(IClipboardSync sync) =>
+        new(null, null, sync.ReadPrimary() is SelectionRead.Text { Value: var selection } ? selection : null);
 }
 
 // what a slave's hash check found it needs from the master: nothing, the selection alone, or the clipboard

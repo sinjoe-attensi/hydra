@@ -38,36 +38,33 @@ public record ClipboardSnapshot(string? Text, string? PrimaryText, byte[]? Image
 }
 
 // a clipboard that could not be read, which says nothing of what it holds: held open by another app, an owner that
-// never answered, a native call that failed
-public sealed class ClipboardUnreadableException(string message, Exception? inner = null) : Exception(message, inner);
+// never answered, a native call that failed. Thrown only inside a platform, which answers it as Unreadable
+internal sealed class ClipboardUnreadableException(string message, Exception? inner = null) : Exception(message, inner)
+{
+    public ClipboardRead.Unreadable AsRead() => new(Message, InnerException);
+
+    public SelectionRead.Unreadable AsSelection() => new(Message, InnerException);
+}
 
 // a format of the clipboard a write may refuse
 public enum ClipboardFormat { Text, Html, Rtf, Image }
 
-// one read of the clipboard's own formats, before any echo fallback; copied files are read as nothing else
-public sealed record ClipboardRead(string? Text, byte[]? ImagePng, string? Html, byte[]? Rtf, bool Concealed, bool HasFiles = false)
-{
-    public static readonly ClipboardRead Empty = new(null, null, null, null, false);
-    public static readonly ClipboardRead Files = new(null, null, null, null, false, HasFiles: true);
-}
-
 // one format a platform writes, and the write, which says whether the clipboard took it
 public sealed record FormatWrite(ClipboardFormat Format, Func<bool> Write);
 
-// ReadAll throws ClipboardUnreadableException when the clipboard cannot be read, never answering null or false for a
-// clipboard it could not see; the selection reads as none when it cannot be read
+// no read throws: a clipboard or selection that could not be read answers Unreadable, never empty or none
 public interface IClipboardSync
 {
     // every format (HTML portable, without Windows' CF_HTML wrapper) and whether it carries a password manager's
     // concealed/transient markers, in one read
-    ClipboardRead ReadAll();
+    ClipboardRead Read();
 
-    string? GetPrimaryText() => null;
+    SelectionRead ReadPrimary() => new SelectionRead.None();
     bool SetPrimaryText(string text) => false; // whether it kept it
     bool HasFileClipboard() => false;
 
     // True only while an all-null read can mean that this process still owns the clipboard and
-    // ReadAll echo-suppressed its representations. Platforms that can track ownership should
+    // Read echo-suppressed its representations. Platforms that can track ownership should
     // return false after another process (or the system clipboard) takes ownership.
     bool CanUseEchoFallback() => true;
 

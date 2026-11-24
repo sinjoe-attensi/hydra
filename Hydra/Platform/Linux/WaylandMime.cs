@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Platform.Linux;
 
-// The Wayland clipboard's MIME types and how a read of them becomes a ClipboardRead, shared by the portal's clipboard
+// The Wayland clipboard's MIME types and how a read of them becomes ClipboardContents, shared by the portal's clipboard
 // and its wl-clipboard fallback.
 internal static class WaylandMime
 {
@@ -34,7 +34,7 @@ internal static class WaylandMime
     // that reads, by preference, a failed one falling through to the next; any other format that could not be read is
     // left out; a hint that could not be read conceals, so a password manager's copy is never taken for plain text.
     // Unreadable only when something failed and nothing could be read (unknown, never empty); nothing there is Empty
-    internal static ClipboardRead ReadOffered(IReadOnlySet<string> offered, Func<string, int, byte[]?> read, ILogger log)
+    internal static ClipboardContents ReadOffered(IReadOnlySet<string> offered, Func<string, int, byte[]?> read, ILogger log)
     {
         var failed = new List<string>();
         ClipboardUnreadableException? failure = null;
@@ -64,9 +64,9 @@ internal static class WaylandMime
         var hint = offered.Contains(PasswordHint) ? Try(PasswordHint) : null;
         var concealed = failed.Contains(PasswordHint) || IsSecret(hint);
 
-        var result = Read(text, png, html, rtf, concealed);
+        var result = Contents(text, png, html, rtf, concealed);
         if (failure == null) return result;
-        if (ReferenceEquals(result, ClipboardRead.Empty))
+        if (ReferenceEquals(result, ClipboardContents.Empty))
             throw new ClipboardUnreadableException($"none of the clipboard's {string.Join(", ", failed)} could be read", failure);
 
         // a text type that fell through to another is no loss; a format left out is
@@ -93,18 +93,18 @@ internal static class WaylandMime
     }
 
     // a read of the clipboard's formats, each absent when null or empty; nothing at all is Empty
-    internal static ClipboardRead Read(byte[]? text, byte[]? png, byte[]? html, byte[]? rtf, bool concealed)
+    internal static ClipboardContents Contents(byte[]? text, byte[]? png, byte[]? html, byte[]? rtf, bool concealed)
     {
         text = NonEmpty(text);
         png = NonEmpty(png);
         html = NonEmpty(html);
         rtf = NonEmpty(rtf);
-        if (text == null && png == null && html == null && rtf == null) return ClipboardRead.Empty;
-        return new ClipboardRead(
+        if (text == null && png == null && html == null && rtf == null) return ClipboardContents.Empty;
+        return new ClipboardContents(
             text != null ? Encoding.UTF8.GetString(text) : null,
-            png,
             html != null ? Encoding.UTF8.GetString(html) : null,
             rtf,
+            png,
             concealed);
     }
 

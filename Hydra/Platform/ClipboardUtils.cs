@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Hashing;
 using System.Text;
 using ByteSizeLib;
@@ -15,33 +16,34 @@ public static class ClipboardUtils
     // unknown, never empty
     public static ClipboardSnapshot? ReadWithFallback(IClipboardSync sync, ClipboardSnapshot? fallback, ILogger log, string context)
     {
-        try
+        switch (sync.Read())
         {
-            return Read(sync, fallback, log, context);
-        }
-        catch (ClipboardUnreadableException ex)
-        {
-            log.LogWarning(ex, "Clipboard {Context}: the clipboard could not be read, so nothing is known of it this time", context);
-            return null;
+            case ClipboardRead.Contents { Value: var contents }:
+                return Read(sync, contents, fallback, log, context);
+            case ClipboardRead.Files:
+                if (log.IsEnabled(LogLevel.Debug))
+                    log.LogDebug("Clipboard {Context} contains files; preserving the native file clipboard", context);
+                return TrimToFit(null, SelectionText(sync), null, null, null, log, context);
+            case ClipboardRead.Unreadable unreadable:
+                log.LogWarning(unreadable.Cause, "Clipboard {Context}: the clipboard could not be read ({Reason}), so nothing is known of it this time",
+                    context, unreadable.Reason);
+                return null;
+            default:
+                throw new UnreachableException();
         }
     }
 
-    private static ClipboardSnapshot Read(IClipboardSync sync, ClipboardSnapshot? fallback, ILogger log, string context)
-    {
-        var read = sync.ReadAll();
-        if (read.HasFiles)
-        {
-            if (log.IsEnabled(LogLevel.Debug))
-                log.LogDebug("Clipboard {Context} contains files; preserving the native file clipboard", context);
-            return TrimToFit(null, sync.GetPrimaryText(), null, null, null, log, context);
-        }
+    // the selection as it stands; one that could not be read is none
+    private static string? SelectionText(IClipboardSync sync) => sync.ReadPrimary() is SelectionRead.Text { Value: var text } ? text : null;
 
+    private static ClipboardSnapshot Read(IClipboardSync sync, ClipboardContents read, ClipboardSnapshot? fallback, ILogger log, string context)
+    {
         var text = read.Text;
-        var primaryText = sync.GetPrimaryText();
-        var image = read.ImagePng;
+        var primaryText = SelectionText(sync);
+        var image = read.Png;
         var html = read.Html;
         var rtf = read.Rtf;
-        var concealed = read.Concealed;
+        var concealed = read.Secret;
         // a clear's placeholder read back, as when Hydra no longer owns it, is no content, and never concealed
         if (ClipboardSnapshot.IsPlaceholder(text, image, html, rtf))
         {

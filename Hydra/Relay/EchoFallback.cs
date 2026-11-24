@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Relay;
 
-// a host's echo fallback: what it last took from a peer, read back where ReadAll finds no format while the clipboard is
+// a host's echo fallback: what it last took from a peer, read back where Read finds no format while the clipboard is
 // still Hydra's write
 public sealed class EchoFallback(IClipboardSync sync, ILogger log)
 {

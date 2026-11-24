@@ -41,11 +41,11 @@ public sealed class SimulatedClipboard : IClipboardSync
         _fromSlave.Abandoned += (_, _) => AbandonedStreams++;
     }
 
-    // what is on the clipboard, a clear's placeholder reading as nothing; ReadAll reads it as it stands
+    // what is on the clipboard, a clear's placeholder reading as nothing; Read reads it as it stands
     public string? Text => _text == ClipboardSnapshot.PlaceholderText ? null : _text;
     private string? _text;
     public byte[]? ImagePng { get; private set; }
-    public string? Primary => GetPrimaryText();
+    public string? Primary => ReadPrimary() is SelectionRead.Text { Value: var primary } ? primary : null;
     public int ClipboardWrites { get; private set; }
 
     // the incoming streams this host gave up on, because the clipboard was no longer Hydra's
@@ -124,14 +124,15 @@ public sealed class SimulatedClipboard : IClipboardSync
 
     private ulong? PendingFromMaster(string host) => _fromMaster.PendingFrom(host);
 
-    public ClipboardRead ReadAll() => new(_owned ? null : _text, _owned ? null : ImagePng, null, null, Concealed);
+    public ClipboardRead Read() => new ClipboardRead.Contents(new ClipboardContents(_owned ? null : _text, null, null, _owned ? null : ImagePng, Concealed));
 
     public bool CanUseEchoFallback() => _owned;
 
     // every copy and every one of Hydra's writes moves it, as the OS counter (X11: Hydra's owner-change counter) does
     public long? ChangeCount() => _version;
 
-    public string? GetPrimaryText() => _os == ClipboardOs.Linux ? _x11Primary : _copied.Read();
+    public SelectionRead ReadPrimary() => _os != ClipboardOs.Linux ? _copied.Read()
+        : _x11Primary is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
 
     public bool SetPrimaryText(string text)
     {
@@ -168,7 +169,7 @@ public sealed class SimulatedClipboard : IClipboardSync
     }
 
     // a password manager's copy is no text copy, so never the primary
-    private string? ReadTextCopy() => ImagePng != null || Concealed ? null : _text;
+    private SelectionRead ReadTextCopy() => ImagePng != null || Concealed || _text == null ? new SelectionRead.None() : new SelectionRead.Text(_text);
 
     private void Take(string? text, byte[]? png, bool concealed = false)
     {

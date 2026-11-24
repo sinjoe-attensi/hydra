@@ -1,4 +1,5 @@
 using Hydra.Platform;
+using Tests.Setup;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Tests.Clipboard;
@@ -23,7 +24,7 @@ public class CopiedPrimaryTests
         _primary = new CopiedPrimary(() => _version, () =>
         {
             _reads++;
-            return _busy ? throw new IOException("busy") : _text;
+            return _busy ? new SelectionRead.Unreadable("busy") : _text is { } text ? new SelectionRead.Text(text) : new SelectionRead.None();
         }, NullLogger.Instance);
     }
 
@@ -46,7 +47,7 @@ public class CopiedPrimaryTests
     {
         _text = "copied";
 
-        Assert.That(_primary.Read(), Is.EqualTo("copied"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -55,7 +56,7 @@ public class CopiedPrimaryTests
         _text = "older copy";
         _primary.Relay("selected on linux");
 
-        Assert.That(_primary.Read(), Is.EqualTo("selected on linux"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
     }
 
     [Test]
@@ -64,7 +65,7 @@ public class CopiedPrimaryTests
         _primary.Relay("selected on linux");
         UserCopies("copied since");
 
-        Assert.That(_primary.Read(), Is.EqualTo("copied since"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied since"));
     }
 
     [Test]
@@ -73,7 +74,7 @@ public class CopiedPrimaryTests
         _primary.Relay("selected on linux");
         UserCopies(null);
 
-        Assert.That(_primary.Read(), Is.EqualTo("selected on linux"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
     }
 
     [Test]
@@ -81,7 +82,7 @@ public class CopiedPrimaryTests
     {
         HydraWrites("selected on linux", "written");
 
-        Assert.That(_primary.Read(), Is.EqualTo("selected on linux"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
     }
 
     [Test]
@@ -91,7 +92,7 @@ public class CopiedPrimaryTests
         HydraWrites("selected on linux", "written");
         UserCopies("written");
 
-        Assert.That(_primary.Read(), Is.EqualTo("written"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("written"));
     }
 
     [Test]
@@ -123,8 +124,8 @@ public class CopiedPrimaryTests
     public void Read_SameVersion_ReadsTheClipboardOnce()
     {
         UserCopies("copied");
-        _primary.Read();
-        _primary.Read();
+        _primary.Read().TextOrNone();
+        _primary.Read().TextOrNone();
 
         Assert.That(_reads, Is.EqualTo(1));
     }
@@ -133,8 +134,8 @@ public class CopiedPrimaryTests
     public void Read_TextlessCopy_ReadsTheClipboardOnce()
     {
         UserCopies(null);
-        _primary.Read();
-        _primary.Read();
+        _primary.Read().TextOrNone();
+        _primary.Read().TextOrNone();
 
         Assert.That(_reads, Is.EqualTo(1));
     }
@@ -145,9 +146,9 @@ public class CopiedPrimaryTests
         _primary.Relay("selected on linux");
         UserCopies("copied");
         _busy = true;
-        var whileBusy = _primary.Read();
+        var whileBusy = _primary.Read().TextOrNone();
         _busy = false;
-        var afterwards = _primary.Read();
+        var afterwards = _primary.Read().TextOrNone();
 
         using (Assert.EnterMultipleScope())
         {
@@ -162,10 +163,10 @@ public class CopiedPrimaryTests
         // once noticed, a text copy is the newest selection until something newer comes
         _primary.Relay("selected on linux");
         UserCopies("copied");
-        _primary.Read();
+        _primary.Read().TextOrNone();
         UserCopies(null);
 
-        Assert.That(_primary.Read(), Is.EqualTo("copied"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -176,7 +177,7 @@ public class CopiedPrimaryTests
         UserCopies("copied since");
         HydraWrites(null, "written");
 
-        Assert.That(_primary.Read(), Is.EqualTo("copied since"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied since"));
     }
 
     [Test]
@@ -185,7 +186,7 @@ public class CopiedPrimaryTests
         UserCopies("copied");
         HydraWrites("incoming selection", "written");
 
-        Assert.That(_primary.Read(), Is.EqualTo("incoming selection"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("incoming selection"));
     }
 
     [Test]
@@ -196,7 +197,7 @@ public class CopiedPrimaryTests
         _primary.Write("relayed selection", _ =>
         {
             UserCopies("half written");
-            during = _primary.Read();
+            during = _primary.Read().TextOrNone();
             return true;
         });
 
@@ -215,7 +216,7 @@ public class CopiedPrimaryTests
                 return true;
             });
             UserCopies("half written");
-            during = _primary.Read();
+            during = _primary.Read().TextOrNone();
             return true;
         });
 
@@ -229,7 +230,7 @@ public class CopiedPrimaryTests
         HydraWrites("relayed selection", "written");
         _primary.Write(null, _ => false);
 
-        Assert.That(_primary.Read(), Is.EqualTo("relayed selection"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -244,7 +245,7 @@ public class CopiedPrimaryTests
             return false;
         });
 
-        Assert.That(_primary.Read(), Is.EqualTo("relayed during the write"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("relayed during the write"));
     }
 
     [Test]
@@ -256,7 +257,7 @@ public class CopiedPrimaryTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(replaced, Is.False);
-            Assert.That(_primary.Read(), Is.EqualTo("copied after"));
+            Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied after"));
         }
     }
 
@@ -268,7 +269,7 @@ public class CopiedPrimaryTests
         _primary.Write(null, _ => false);
         _busy = false;
 
-        Assert.That(_primary.Read(), Is.EqualTo("copied"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -277,6 +278,6 @@ public class CopiedPrimaryTests
         UserCopies("older copy");
         _primary.Relay("newer selection");
 
-        Assert.That(_primary.Read(), Is.EqualTo("newer selection"));
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("newer selection"));
     }
 }

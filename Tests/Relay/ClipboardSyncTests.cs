@@ -59,7 +59,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
     [Test]
     public async Task OnEnterRemoteScreen_EmptyClipboard_NoPushSent()
     {
-        var clipboard = new FakeClipboardSync(); // ReadAll reads nothing
+        var clipboard = new FakeClipboardSync(); // Read reads nothing
         var (platform, relay, service) = await StartMaster(clipboard);
 
         TransitionTestHelper.EnterRemote(platform);
@@ -204,7 +204,7 @@ public class ClipboardSyncTests : MasterClipboardFixture
     [Test]
     public async Task OnClipboardPullResponse_ForwardsPrimaryToLinuxSlave()
     {
-        // master has no local PRIMARY (GetPrimaryText returns null) but receives it from slave A;
+        // master has no local PRIMARY (ReadPrimary reads none) but receives it from slave A;
         // cursor is still on that slave so primary text from pull response should be forwarded in the push
         var clipboard = new FakeClipboardSync();
         clipboard.SetupText("master clipboard");
@@ -249,17 +249,17 @@ public class ClipboardSyncTests : MasterClipboardFixture
     }
 
     [Test]
-    public async Task SlaveReceivesClipboardPull_CallsGetPrimaryText()
+    public async Task SlaveReceivesClipboardPull_ReadsPrimary()
     {
         var clipboard = new FakeClipboardSync();
         clipboard.SetPrimaryText("selected on slave");
 
         var slave = new TestableSlaveRelay(clipboard: clipboard);
-        var before = clipboard.GetPrimaryTextCallCount;
+        var before = clipboard.ReadPrimaryCallCount;
 
         await slave.SimulateReceive("master-pc", MessageKind.ClipboardPull, new ClipboardPullMessage(1).ToSaneJson());
 
-        Assert.That(clipboard.GetPrimaryTextCallCount, Is.GreaterThan(before));
+        Assert.That(clipboard.ReadPrimaryCallCount, Is.GreaterThan(before));
     }
 
     [Test]

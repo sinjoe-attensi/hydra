@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using Hydra.Platform;
+using Tests.Setup;
 using Hydra.Platform.MacOs;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -23,7 +24,7 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("secret or name", marker));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -32,7 +33,7 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
         // a TIFF is not read as an image, so the copy travels as text and is the primary too
         HydraWritesThen(() => WriteForeignCopy("copied", "public.tiff"));
 
-        Assert.That(Hydra.GetPrimaryText(), Is.EqualTo("copied"));
+        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -59,12 +60,12 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
             if (copies++ == 0) WriteForeignCopy("password", "org.nspasteboard.ConcealedType");
         };
 
-        var read = sync.ReadAll();
+        var read = sync.Read().AsContents();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(read.Text, Is.EqualTo("password"));
-            Assert.That(read.Concealed, Is.True);
+            Assert.That(read.Secret, Is.True);
         }
     }
 
@@ -75,21 +76,21 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
         var sync = (MacClipboardSync)Hydra;
         sync.DuringRead = () => WriteForeignCopy("password", "org.nspasteboard.ConcealedType");
 
-        Assert.Throws<ClipboardUnreadableException>(() => sync.ReadAll());
+        Assert.That(sync.Read(), Is.InstanceOf<ClipboardRead.Unreadable>());
     }
 
     [Test]
     public void ReadAll_AConcealedCopy_IsConcealed_AndThePlaceholderReadsAsNoCopy()
     {
         WriteForeignCopy("secret", "org.nspasteboard.ConcealedType");
-        var concealed = Hydra.ReadAll();
+        var concealed = Hydra.Read().AsContents();
         Hydra.ClearClipboard();
         var placeholder = ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(concealed.Text, Is.EqualTo("secret"));
-            Assert.That(concealed.Concealed, Is.True);
+            Assert.That(concealed.Secret, Is.True);
             Assert.That(placeholder, Is.EqualTo(ClipboardSnapshot.Empty));
         }
     }

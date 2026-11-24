@@ -235,7 +235,7 @@ public class XorgClipboardSyncTests
         XclipWrite("x-kde-passwordManagerHint", "secret"u8.ToArray());
 
         using var reader = new XorgClipboardSync();
-        Assert.That(reader.ReadAll().Concealed, Is.True);
+        Assert.That(reader.Read().AsContents().Secret, Is.True);
     }
 
     [Test]
@@ -267,7 +267,7 @@ public class XorgClipboardSyncTests
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes(s));
 
         using var reader = new XorgClipboardSync();
-        Assert.That(reader.ReadAll().Text, Is.EqualTo(s));
+        Assert.That(reader.Read().AsContents().Text, Is.EqualTo(s));
     }
 
     [Test]
@@ -276,7 +276,7 @@ public class XorgClipboardSyncTests
         XclipWrite("text/html", Encoding.UTF8.GetBytes("<i>café</i>"));
 
         using var reader = new XorgClipboardSync();
-        Assert.That(reader.ReadAll().Html, Is.EqualTo("<i>café</i>"));
+        Assert.That(reader.Read().AsContents().Html, Is.EqualTo("<i>café</i>"));
     }
 
     [Test]
@@ -286,7 +286,7 @@ public class XorgClipboardSyncTests
         XclipWrite("image/png", png);
 
         using var reader = new XorgClipboardSync();
-        Assert.That(reader.ReadAll().ImagePng, Is.EqualTo(png));
+        Assert.That(reader.Read().AsContents().Png, Is.EqualTo(png));
     }
 
     // -- round-trip between two of our own instances (no external peer) --
@@ -304,8 +304,8 @@ public class XorgClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(reader.ReadAll().Text, Is.EqualTo("plain"));
-            Assert.That(reader.ReadAll().Html, Is.EqualTo("<b>rich</b>"));
+            Assert.That(reader.Read().AsContents().Text, Is.EqualTo("plain"));
+            Assert.That(reader.Read().AsContents().Html, Is.EqualTo("<b>rich</b>"));
         }
     }
 
@@ -317,7 +317,7 @@ public class XorgClipboardSyncTests
         using var owner = new XorgClipboardSync();
         owner.SetPrimaryText("selected");
 
-        Assert.That(owner.GetPrimaryText(), Is.EqualTo("selected"));
+        Assert.That(owner.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
     }
 
     [Test]
@@ -326,7 +326,7 @@ public class XorgClipboardSyncTests
         using var reader = new XorgClipboardSync();
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("highlighted"), "primary");
 
-        Assert.That(reader.GetPrimaryText(), Is.EqualTo("highlighted"));
+        Assert.That(reader.ReadPrimary().TextOrNone(), Is.EqualTo("highlighted"));
     }
 
     [Test]
@@ -499,7 +499,7 @@ public class XorgClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(LosesOwnership(hydra), Is.True);
-            Assert.That(hydra.ReadAll().Text, Is.EqualTo("foo"));
+            Assert.That(hydra.Read().AsContents().Text, Is.EqualTo("foo"));
         }
     }
 
@@ -549,7 +549,7 @@ public class XorgClipboardSyncTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(reader.ReadAll().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
+            Assert.That(reader.Read().AsContents().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
             Assert.That(ClipboardUtils.ReadWithFallback(reader, null, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
         }
     }
@@ -561,7 +561,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var asked = new List<nint>();
             var served = Task.Run(() =>
             {
@@ -573,10 +573,10 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            var all = await read.WaitAsync(Bound);
+            var all = (await read.WaitAsync(Bound)).AsContents();
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(all, Is.EqualTo(new ClipboardRead("listed", null, null, null, false)));
+                Assert.That(all, Is.EqualTo(new ClipboardContents("listed", null, null, null, false)));
                 Assert.That(asked, Is.EqualTo([NativeMethods.XInternAtom(owner, "UTF8_STRING", false)]));
             }
         });
@@ -593,7 +593,7 @@ public class XorgClipboardSyncTests
             var hint = NativeMethods.XInternAtom(owner, "x-kde-passwordManagerHint", false);
             var second = NativeMethods.XCreateSimpleWindow(owner, NativeMethods.XDefaultRootWindow(owner), 0, 0, 1, 1, 0, nint.Zero, nint.Zero);
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var served = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [utf8]);
@@ -607,7 +607,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo(new ClipboardRead("password", null, null, null, true)));
+            Assert.That((await read.WaitAsync(Bound)).AsContents(), Is.EqualTo(new ClipboardContents("password", null, null, null, true)));
         });
     }
 
@@ -621,7 +621,7 @@ public class XorgClipboardSyncTests
             var utf8 = NativeMethods.XInternAtom(owner, "UTF8_STRING", false);
             var timestamp = NativeMethods.XInternAtom(owner, "TIMESTAMP", false);
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var served = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [timestamp, utf8]);
@@ -631,7 +631,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That((await read.WaitAsync(Bound)).Text, Is.EqualTo("copied"));
+            Assert.That((await read.WaitAsync(Bound)).AsContents().Text, Is.EqualTo("copied"));
         });
     }
 
@@ -644,7 +644,7 @@ public class XorgClipboardSyncTests
             var utf8 = NativeMethods.XInternAtom(owner, "UTF8_STRING", false);
             var timestamp = NativeMethods.XInternAtom(owner, "TIMESTAMP", false);
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var served = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [timestamp, utf8]);
@@ -658,7 +658,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That((await read.WaitAsync(Bound)).Text, Is.EqualTo("new"));
+            Assert.That((await read.WaitAsync(Bound)).AsContents().Text, Is.EqualTo("new"));
         });
     }
 
@@ -678,11 +678,11 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var answered = Task.Run(() => NextRequest(owner));
 
             await answered.WaitAsync(Bound);
-            Assert.That(async () => await read.WaitAsync(Bound), Throws.TypeOf<ClipboardUnreadableException>());
+            Assert.That(await read.WaitAsync(Bound), Is.InstanceOf<ClipboardRead.Unreadable>());
         });
     }
 
@@ -693,7 +693,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var asked = new List<nint>();
             var served = Task.Run(() =>
             {
@@ -705,10 +705,10 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            var all = await read.WaitAsync(Bound);
+            var all = (await read.WaitAsync(Bound)).AsContents();
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(all, Is.EqualTo(new ClipboardRead("plain ünïcode", null, null, null, false)));
+                Assert.That(all, Is.EqualTo(new ClipboardContents("plain ünïcode", null, null, null, false)));
                 Assert.That(asked, Is.EqualTo([NativeMethods.XInternAtom(owner, "UTF8_STRING", false)]));
             }
         });
@@ -721,7 +721,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var served = Task.Run(() =>
             {
                 var targets = NextRequest(owner);
@@ -734,7 +734,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo(new ClipboardRead("café", null, null, null, false)));
+            Assert.That((await read.WaitAsync(Bound)).AsContents(), Is.EqualTo(new ClipboardContents("café", null, null, null, false)));
         });
     }
 
@@ -745,7 +745,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var refused = Task.Run(() =>
             {
                 for (var i = 0; i < 3; i++)
@@ -756,7 +756,7 @@ public class XorgClipboardSyncTests
             });
 
             await refused.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo(new ClipboardRead(null, null, null, null, false)));
+            Assert.That((await read.WaitAsync(Bound)).AsContents(), Is.EqualTo(new ClipboardContents(null, null, null, null, false)));
         });
     }
 
@@ -769,7 +769,7 @@ public class XorgClipboardSyncTests
             var big = new byte[1_500_000];
             for (var i = 0; i < big.Length; i++) big[i] = (byte)('a' + i % 26);
             using var reader = new XorgClipboardSync();
-            var read = ReadOffThread(reader, r => r.Text);
+            var read = ReadOffThread(reader);
             var served = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [NativeMethods.XInternAtom(owner, "UTF8_STRING", false)]);
@@ -777,7 +777,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo(Encoding.UTF8.GetString(big)));
+            Assert.That((await read.WaitAsync(Bound)).AsContents().Text, Is.EqualTo(Encoding.UTF8.GetString(big)));
         });
     }
 
@@ -789,7 +789,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = ReadOffThread(reader, r => r.ImagePng);
+            var read = ReadOffThread(reader);
 
             // the read's request has reached us, so it is waiting for an answer
             var answered = Task.Run(() =>
@@ -802,7 +802,7 @@ public class XorgClipboardSyncTests
             });
 
             await answered.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo(TestImages.Png));
+            Assert.That((await read.WaitAsync(Bound)).AsContents().Png, Is.EqualTo(TestImages.Png));
         });
     }
 
@@ -814,7 +814,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = ReadOffThread(reader, r => r.ImagePng);
+            var read = ReadOffThread(reader);
             var answered = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [NativeMethods.XInternAtom(owner, "image/png", false)]);
@@ -824,9 +824,9 @@ public class XorgClipboardSyncTests
 
             await answered.WaitAsync(Bound);
             if (refuses)
-                Assert.That(await read.WaitAsync(Bound), Is.Null);
+                Assert.That((await read.WaitAsync(Bound)).AsContents().Png, Is.Null);
             else
-                Assert.That(async () => await read.WaitAsync(Bound), Throws.TypeOf<ClipboardUnreadableException>());
+                Assert.That(await read.WaitAsync(Bound), Is.InstanceOf<ClipboardRead.Unreadable>());
         });
     }
 
@@ -838,7 +838,7 @@ public class XorgClipboardSyncTests
         {
             byte[][] chunks = ["slow "u8.ToArray(), "but "u8.ToArray(), "steady"u8.ToArray()];
             using var reader = new XorgClipboardSync();
-            var read = ReadOffThread(reader, r => r.Text);
+            var read = ReadOffThread(reader);
             var served = Task.Run(() =>
             {
                 ServeTargets(owner, NextRequest(owner), [NativeMethods.XInternAtom(owner, "UTF8_STRING", false)]);
@@ -846,7 +846,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That(await read.WaitAsync(Bound), Is.EqualTo("slow but steady"));
+            Assert.That((await read.WaitAsync(Bound)).AsContents().Text, Is.EqualTo("slow but steady"));
         });
     }
 
@@ -858,7 +858,7 @@ public class XorgClipboardSyncTests
         {
             var utf8 = NativeMethods.XInternAtom(owner, "UTF8_STRING", false);
             using var reader = new XorgClipboardSync();
-            var first = ReadOffThread(reader, r => r.Text);
+            var first = ReadOffThread(reader);
             XEvent stalled = default;
             var started = Task.Run(() =>
             {
@@ -868,9 +868,9 @@ public class XorgClipboardSyncTests
                 AwaitDeleted(owner, stalled.SelectionRequestRequestor, stalled.SelectionRequestProperty);
             });
             await started.WaitAsync(Bound);
-            Assert.That(async () => await first.WaitAsync(Bound), Throws.TypeOf<ClipboardUnreadableException>());
+            Assert.That(await first.WaitAsync(Bound), Is.InstanceOf<ClipboardRead.Unreadable>());
 
-            var second = ReadOffThread(reader, r => r.Text);
+            var second = ReadOffThread(reader);
             var served = Task.Run(() =>
             {
                 var targets = NextRequest(owner);
@@ -881,7 +881,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            Assert.That(await second.WaitAsync(Bound), Is.EqualTo("fresh"));
+            Assert.That((await second.WaitAsync(Bound)).AsContents().Text, Is.EqualTo("fresh"));
         });
     }
 
@@ -894,11 +894,11 @@ public class XorgClipboardSyncTests
         {
             var png = NativeMethods.XInternAtom(owner, "image/png", false);
             using var reader = new XorgClipboardSync();
-            var first = ReadOffThread(reader, r => r.ImagePng);
+            var first = ReadOffThread(reader);
             var stalled = await Task.Run(() => NextRequest(owner)).WaitAsync(Bound);
-            Assert.That(async () => await first.WaitAsync(Bound), Throws.TypeOf<ClipboardUnreadableException>());
+            Assert.That(await first.WaitAsync(Bound), Is.InstanceOf<ClipboardRead.Unreadable>());
 
-            var second = ReadOffThread(reader, r => r.ImagePng);
+            var second = ReadOffThread(reader);
             var asked = new List<nint>();
             var served = Task.Run(() =>
             {
@@ -911,7 +911,7 @@ public class XorgClipboardSyncTests
             });
 
             await served.WaitAsync(Bound);
-            var read = await second.WaitAsync(Bound);
+            var read = (await second.WaitAsync(Bound)).AsContents().Png;
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(read, Is.EqualTo(TestImages.Png));
@@ -920,8 +920,8 @@ public class XorgClipboardSyncTests
         });
     }
 
-    // one field of a read on another thread, while the test serves it
-    private static Task<T> ReadOffThread<T>(XorgClipboardSync reader, Func<ClipboardRead, T> field) => Task.Run(() => field(reader.ReadAll()));
+    // a read on another thread, while the test serves it
+    private static Task<ClipboardRead> ReadOffThread(XorgClipboardSync reader) => Task.Run(reader.Read);
 
     // the requestor took the last chunk, so the owner may send the next
     private static void AwaitDeleted(nint display, nint window, nint property)
@@ -942,7 +942,7 @@ public class XorgClipboardSyncTests
         await WithForeignOwner(async owner =>
         {
             using var reader = new XorgClipboardSync();
-            var read = Task.Run(reader.ReadAll);
+            var read = Task.Run(reader.Read);
             var answered = Task.Run(() =>
             {
                 var hint = NativeMethods.XInternAtom(owner, "x-kde-passwordManagerHint", false);
@@ -950,7 +950,7 @@ public class XorgClipboardSyncTests
             });
 
             await answered.WaitAsync(Bound);
-            Assert.That(async () => await read.WaitAsync(Bound), Throws.TypeOf<ClipboardUnreadableException>());
+            Assert.That(await read.WaitAsync(Bound), Is.InstanceOf<ClipboardRead.Unreadable>());
         });
     }
 

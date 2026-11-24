@@ -68,7 +68,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // moved by every owner change taken and every write, so a read straddling one is read again
     private long _generation;
     // the last whole read and the generation it was read at: the selection's read of the same copy takes it, so one
-    // ReadAll and its GetPrimaryText never ask the owner twice
+    // Read and its ReadPrimary never ask the owner twice
     private GenerationRead? _lastRead;
     private long _count;
     // owner changes until then are older than Hydra's write; those passed over, kept for a write that fails
@@ -87,7 +87,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // what the session's selection serves, by MIME type: Hydra's write, or the own copy a claim read
     private Dictionary<string, byte[]> _serving = new(StringComparer.Ordinal);
     // the master's own clipboard as the claim read it, while the session serves it and no write replaced it
-    private ClipboardRead? _ownCopy;
+    private ClipboardContents? _ownCopy;
     // the types the selection was last set with, which are those it serves
     private HashSet<string> _claimed = new(StringComparer.Ordinal);
     // the last claim's read, taken again while the counter stays where it was then (no copy and no write since)
@@ -129,18 +129,30 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // whether the portal's clipboard, or the sync in its place, is there, waiting a little for it
     internal bool Connected() => Resolve(wait: true) != null;
 
-    public ClipboardRead ReadAll() => Resolve(wait: true) switch
+    public ClipboardRead Read() => Resolve(wait: true) switch
     {
-        { Fallback: { } fallback } => fallback.ReadAll(),
-        { Portal: { } portal } => ReadPortal(portal),
-        _ => throw new ClipboardUnreadableException("the portal's clipboard is not connected"),
+        { Fallback: { } fallback } => fallback.Read(),
+        { Portal: { } portal } => Readable(portal),
+        _ => new ClipboardRead.Unreadable("the portal's clipboard is not connected"),
     };
 
-    public string? GetPrimaryText() => Resolve(wait: true) switch
+    private ClipboardRead Readable(IPortalClipboard portal)
     {
-        { Fallback: { } fallback } => fallback.GetPrimaryText(),
+        try
+        {
+            return new ClipboardRead.Contents(ReadPortal(portal));
+        }
+        catch (ClipboardUnreadableException e)
+        {
+            return e.AsRead();
+        }
+    }
+
+    public SelectionRead ReadPrimary() => Resolve(wait: true) switch
+    {
+        { Fallback: { } fallback } => fallback.ReadPrimary(),
         { Portal: not null } => _primary.Read(),
-        _ => null,
+        _ => new SelectionRead.Unreadable("the portal's clipboard is not connected"),
     };
 
     public bool SetPrimaryText(string text) => Resolve(wait: true) switch
@@ -243,7 +255,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
 
             if (claim == null)
             {
-                ClipboardRead own;
+                ClipboardContents own;
                 try
                 {
                     own = ReadPortal(portal);
@@ -253,7 +265,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
                     if (Log.IsEnabled(LogLevel.Debug)) Log.LogDebug(e, "The clipboard could not be read for the visit; not claiming it");
                     return;
                 }
-                if (own.Concealed)
+                if (own.Secret)
                 {
                     if (Log.IsEnabled(LogLevel.Debug)) Log.LogDebug("The clipboard holds a concealed copy; leaving it with its owner for the visit");
                     return;
@@ -288,7 +300,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
 
     // what a claim serves of the master's own copy: each format it holds, its text as every text type, and the rest of
     // the owner's offer
-    private Dictionary<string, byte[]> ClaimServing(IPortalClipboard portal, ClipboardRead own)
+    private Dictionary<string, byte[]> ClaimServing(IPortalClipboard portal, ClipboardContents own)
     {
         var serving = Serving(Snapshot(own));
         if (serving.GetValueOrDefault(WaylandMime.OfferedText[0]) is { } text)
@@ -299,12 +311,12 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     }
 
     // a read of the clipboard as the snapshot a write of it serves
-    private static ClipboardSnapshot Snapshot(ClipboardRead read) => new(read.Text, null, read.ImagePng, read.Html, read.Rtf, read.Concealed);
+    private static ClipboardSnapshot Snapshot(ClipboardContents read) => new(read.Text, null, read.Png, read.Html, read.Rtf, read.Secret);
 
     // The rest of the owner's offer, so a claim loses none of the master's own formats: the X11 text atoms served as its
     // text, and every other type (a file copy's URI list, another image type) read as bytes and served as read, within
     // the clipboard's cap. One that cannot be read is left out
-    private void KeepOthers(IPortalClipboard portal, Dictionary<string, byte[]> serving, ClipboardRead own)
+    private void KeepOthers(IPortalClipboard portal, Dictionary<string, byte[]> serving, ClipboardContents own)
     {
         IReadOnlyList<string>? offered;
         lock (_lock) offered = _types;
@@ -321,7 +333,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
             }
             if (Probed.Contains(type)) continue;
             // no text served as anything but text, and nothing of a concealed copy beyond what Hydra carries
-            if (own.Concealed || left <= 0) continue;
+            if (own.Secret || left <= 0) continue;
             try
             {
                 if (Read(portal, type, (int)Math.Min(left, int.MaxValue)) is { Length: > 0 } data)
@@ -369,35 +381,35 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     }
 
     // what the portal holds as another client offers it, against one owner: read again once when it changed meanwhile
-    private ClipboardRead ReadPortal(IPortalClipboard portal)
+    private ClipboardContents ReadPortal(IPortalClipboard portal)
     {
         lock (_readGate)
             return ReadOnce(portal) ?? ReadOnce(portal) ?? throw new ClipboardUnreadableException("the clipboard changed while it was read, twice");
     }
 
     // null when the owner changed during the read
-    private ClipboardRead? ReadOnce(IPortalClipboard portal)
+    private ClipboardContents? ReadOnce(IPortalClipboard portal)
     {
         HashSet<string>? offered;
         long generation;
         lock (_lock)
         {
             // the master's own copy a claim serves reads as itself; Hydra's write reads as nothing
-            if (Owns()) return _ownCopy ?? ClipboardRead.Empty;
+            if (Owns()) return _ownCopy ?? ClipboardContents.Empty;
             offered = _types?.ToHashSet(StringComparer.Ordinal);
             generation = _generation;
         }
         if (offered == null) return Probe(portal, generation);
-        if (offered.Count == 0) return ClipboardRead.Empty;
+        if (offered.Count == 0) return ClipboardContents.Empty;
 
         return ReadKept(() => WaylandMime.ReadOffered(offered, (type, max) => Read(portal, type, max), Log), generation);
     }
 
     // The read, kept as Kept keeps it; null too when it could not be read because an owner change, a claim or a write
     // landed during it (mutter refuses to read the session's own selection once a claim's lands), so it is read again
-    private ClipboardRead? ReadKept(Func<ClipboardRead> read, long generation)
+    private ClipboardContents? ReadKept(Func<ClipboardContents> read, long generation)
     {
-        ClipboardRead result;
+        ClipboardContents result;
         try
         {
             result = read();
@@ -417,7 +429,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     }
 
     // the read, when no owner change or write landed during it, kept for the selection's read of the same copy; null else
-    private ClipboardRead? Kept(ClipboardRead read, long generation)
+    private ClipboardContents? Kept(ClipboardContents read, long generation)
     {
         lock (_lock)
         {
@@ -433,7 +445,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // No owner change seen since the session started (the portal never announces the selection already there), so its
     // types are unknown: each is asked for as it stands, one that is not there read as absent (Absent); none there is
     // an empty clipboard. Null when the owner changed during the probe
-    private ClipboardRead? Probe(IPortalClipboard portal, long generation) =>
+    private ClipboardContents? Probe(IPortalClipboard portal, long generation) =>
         ReadKept(() => WaylandMime.ReadOffered(Probed, (type, max) => ReadIfThere(portal, type, max), Log), generation);
 
     // one MIME type of the selection, null when it is not there (or runs past the cap); throws when it cannot be read
@@ -457,29 +469,37 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // change reads as empty, not unreadable
     private static bool Absent(Exception? e) => e is DBusErrorReplyException { ErrorName: "org.freedesktop.portal.Error.Failed" };
 
-    // CopiedPrimary's readTextCopy: the text of another client's copy, null for an image or a concealed copy
-    private string? ReadTextCopy()
+    // CopiedPrimary's readTextCopy: the text of another client's copy, none for an image or a concealed copy
+    private SelectionRead ReadTextCopy()
     {
         IPortalClipboard? portal;
         lock (_lock) portal = _portal;
-        if (portal == null) throw new ClipboardUnreadableException("the portal's clipboard is not connected");
+        if (portal == null) return new SelectionRead.Unreadable("the portal's clipboard is not connected");
 
         lock (_readGate)
         {
-            // the copy ReadAll just read, when nothing has changed since; else read as it stands (ReadOnce answers nothing
+            // the copy Read just read, when nothing has changed since; else read as it stands (ReadOnce answers nothing
             // for Hydra's own write), a copy changing under the read tried again on the next one
-            ClipboardRead? read;
+            ClipboardContents? read;
             lock (_lock)
             {
-                if (Owns()) return _ownCopy is { } own ? TextCopy(own) : null;
+                if (Owns()) return _ownCopy is { } own ? TextCopy(own) : new SelectionRead.None();
                 read = _lastRead is { } last && last.Generation == _generation ? last.Read : null;
             }
-            read ??= ReadOnce(portal) ?? throw new ClipboardUnreadableException("the clipboard changed while it was read");
-            return TextCopy(read);
+            try
+            {
+                read ??= ReadOnce(portal);
+            }
+            catch (ClipboardUnreadableException e)
+            {
+                return e.AsSelection();
+            }
+            return read != null ? TextCopy(read) : new SelectionRead.Unreadable("the clipboard changed while it was read");
         }
     }
 
-    private static string? TextCopy(ClipboardRead read) => read.ImagePng != null || read.Concealed ? null : read.Text;
+    private static SelectionRead TextCopy(ClipboardContents read) =>
+        read.Png == null && !read.Secret && read.Text is { } text ? new SelectionRead.Text(text) : new SelectionRead.None();
 
     // one MIME type of the selection, at most maxBytes (int.MaxValue: the clipboard's cap); null when it runs past that
     private byte[]? Read(IPortalClipboard portal, string mimeType, int maxBytes)
@@ -931,8 +951,8 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // the portal's clipboard, or the sync every call goes to in its place
     private sealed record Backend(IPortalClipboard? Portal, IClipboardSync? Fallback);
 
-    private sealed record GenerationRead(long Generation, ClipboardRead Read);
+    private sealed record GenerationRead(long Generation, ClipboardContents Read);
 
     // a claim's own copy, what it served, and the count it was claimed at
-    private sealed record ClaimedRead(long Count, ClipboardRead Read, Dictionary<string, byte[]> Served);
+    private sealed record ClaimedRead(long Count, ClipboardContents Read, Dictionary<string, byte[]> Served);
 }
