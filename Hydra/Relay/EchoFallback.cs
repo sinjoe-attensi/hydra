@@ -3,14 +3,16 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Relay;
 
-// a host's echo fallback: what it last took from a peer, read back where Read finds no format while the clipboard is
-// still Hydra's write
+// a host's echo fallback: what it last took from a peer, read back where Read finds no format while the clipboard still
+// holds Hydra's last write
 public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
 {
+    private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
     private ClipboardSnapshot? _last;
 
     // the clipboard, or null when it could not be read, which is unknown, never empty
-    public ClipboardSnapshot? Read(string context) => ClipboardUtils.ReadWithFallback(platform, Volatile.Read(ref _last), log, context);
+    public ClipboardSnapshot? Read(string context) =>
+        ClipboardUtils.ReadWithFallback(platform, Volatile.Read(ref _last), _changes.Last, log, context);
 
     // what a peer's clipboard is compared against; null when the clipboard could not be read
     public ClipboardBaseline? Baseline(string context) => Read(context) is { } read ? ClipboardBaseline.Of(read) : null;
@@ -25,11 +27,11 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
     // the clipboard was emptied another way, as by the placeholder written in place of a refused concealed copy
     public void Forget() => Volatile.Write(ref _last, null);
 
-    // empties the clipboard, which stays Hydra's own write, so a read finds it empty, not what was last taken; whether
-    // the clear took, the fallback forgotten either way
-    public bool Empty()
+    // empties the clipboard, which stays Hydra's own write, so a read finds it empty, not what was last taken; the clear,
+    // the fallback forgotten either way
+    public ClipboardWrite Empty()
     {
-        var cleared = platform.Clipboard.Write(ClipboardContents.Empty) is ClipboardWrite.Written;
+        var cleared = platform.Clipboard.Write(ClipboardContents.Empty);
         Volatile.Write(ref _last, null);
         return cleared;
     }
@@ -51,7 +53,7 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
     // it said was coming
     public BeginDecision Rejected(string host, Func<BeginDecision> begun)
     {
-        if (ClipboardChanges.Of(platform.Clipboard).StillOwnWrite() ?? platform.Clipboard.CanUseEchoFallback()) return begun();
+        if (_changes.StillOwnWrite()) return begun();
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard stream from {Host} rejected: the clipboard is not Hydra's write, keeping it", host);
         return BeginDecision.Keep;

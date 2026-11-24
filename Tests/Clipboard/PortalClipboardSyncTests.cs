@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
 using Hydra.Platform;
+using Hydra.Relay;
 using Hydra.Platform.Linux;
 using Hydra.Platform.Linux.Wayland;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -76,7 +77,7 @@ public class PortalClipboardSyncTests
         });
         _portal.Failing.UnionWith(["UTF8_STRING", "text/plain;charset=utf-8"]);
 
-        var read = ClipboardUtils.ReadWithFallback(_sync, null, NullLogger.Instance, "test");
+        var read = ClipboardUtils.ReadWithFallback(_sync, null, ClipboardChanges.Of(_sync.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -100,7 +101,7 @@ public class PortalClipboardSyncTests
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray(), ["UTF8_STRING"] = "copied"u8.ToArray() });
         _portal.Failing.UnionWith(["text/plain;charset=utf-8", "UTF8_STRING"]);
 
-        Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, NullLogger.Instance, "test"), Is.Null, "unknown, never empty");
+        Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, ClipboardChanges.Of(_sync.Clipboard).Last, NullLogger.Instance, "test"), Is.Null, "unknown, never empty");
     }
 
     [Test]
@@ -166,7 +167,7 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "hunter2"u8.ToArray(), ["x-kde-passwordManagerHint"] = "secret"u8.ToArray() });
 
-        var read = ClipboardUtils.ReadWithFallback(_sync, null, NullLogger.Instance, "test");
+        var read = ClipboardUtils.ReadWithFallback(_sync, null, ClipboardChanges.Of(_sync.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -192,7 +193,7 @@ public class PortalClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Read(), Is.InstanceOf<ClipboardRead.Unreadable>());
-            Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, NullLogger.Instance, "test"), Is.Null, "unknown, never empty");
+            Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, ClipboardChanges.Of(_sync.Clipboard).Last, NullLogger.Instance, "test"), Is.Null, "unknown, never empty");
         }
     }
 
@@ -213,7 +214,7 @@ public class PortalClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
-            Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, NullLogger.Instance, "test"), Is.Not.Null, "empty, not unknown");
+            Assert.That(ClipboardUtils.ReadWithFallback(_sync, null, ClipboardChanges.Of(_sync.Clipboard).Last, NullLogger.Instance, "test"), Is.Not.Null, "empty, not unknown");
         }
     }
 
@@ -415,17 +416,17 @@ public class PortalClipboardSyncTests
     // -- own writes --
 
     [Test]
-    public void OwnWrite_ReadsAsNothing_AndAllowsTheEchoFallback()
+    public void OwnWrite_ReadsAsNothing_AndIsStillHeld()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
         _portal.ReadTypes.Clear();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.StillHolds(written), Is.True);
             Assert.That(_portal.ReadTypes, Is.Empty, "Hydra's own write is never read back");
         }
     }
@@ -435,12 +436,12 @@ public class PortalClipboardSyncTests
     {
         _portal.ConfirmsWrites = true;
 
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.StillHolds(written), Is.True);
         }
     }
 
@@ -448,14 +449,14 @@ public class PortalClipboardSyncTests
     public void SameTextCopiedAgain_IsNoEcho()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("written"));
-            Assert.That(_sync.CanUseEchoFallback(), Is.False);
+            Assert.That(_sync.StillHolds(written), Is.False);
         }
     }
 
@@ -566,14 +567,14 @@ public class PortalClipboardSyncTests
     {
         _sync.SetClipboard(new ClipboardSnapshot("hunter2", "selected", Png, Concealed: true));
 
-        Assert.That(_sync.ClearClipboard(), Is.True);
+        var cleared = _sync.Cleared();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_portal.Offers[^1], Is.EquivalentTo(PlaceholderFormats));
             Assert.That(_portal.Transfer("text/plain", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardSnapshot.PlaceholderText)));
             Assert.That(_portal.Transfer("image/png", 2), Is.Null);
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.StillHolds(cleared), Is.True);
             Assert.That(_sync.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
         }
     }
@@ -582,14 +583,14 @@ public class PortalClipboardSyncTests
     public void Write_ThePortalRefuses_ReplacesNothing()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
-        var before = _sync.ChangeCount();
+        var before = _sync.Count();
         _portal.SetSelectionFails = true;
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_sync.SetClipboard(new ClipboardSnapshot("written", null, null)), Is.Null);
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(before));
-            Assert.That(_sync.CanUseEchoFallback(), Is.False);
+            Assert.That(_sync.Count(), Is.EqualTo(before));
+            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied"));
         }
     }
@@ -612,16 +613,16 @@ public class PortalClipboardSyncTests
     // -- the change counter --
 
     [Test]
-    public void ChangeCount_MovesOnAWriteAndOnAnotherClientsCopy_NotOnARead()
+    public void Version_MovesOnAWriteAndOnAnotherClientsCopy_NotOnARead()
     {
         _portal.ConfirmsWrites = true;
-        var start = _sync.ChangeCount();
+        var start = _sync.Count();
         _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        var afterWrite = _sync.ChangeCount();
+        var afterWrite = _sync.Count();
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
-        var afterCopy = _sync.ChangeCount();
+        var afterCopy = _sync.Count();
         _sync.Read().AsContents();
-        var afterRead = _sync.ChangeCount();
+        var afterRead = _sync.Count();
 
         using (Assert.EnterMultipleScope())
         {
@@ -633,18 +634,18 @@ public class PortalClipboardSyncTests
     }
 
     [Test]
-    public void ChangeCount_IsUnknown_UntilThePortalIsConnected()
+    public void Version_IsUnknown_UntilThePortalIsConnected()
     {
         var pending = new TaskCompletionSource<IPortalClipboard?>();
         var sync = new PortalClipboardSync(_ => pending.Task, () => new NullClipboardSync(), _time, NullLogger.Instance);
         try
         {
-            Assert.That(sync.ChangeCount(), Is.Null);
+            Assert.That(sync.Count(), Is.Null);
             pending.SetResult(new FakePortalClipboard());
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(sync.Connected(), Is.True);
-                Assert.That(sync.ChangeCount(), Is.Not.Null);
+                Assert.That(sync.Count(), Is.Not.Null);
             }
         }
         finally
@@ -654,65 +655,61 @@ public class PortalClipboardSyncTests
     }
 
     [Test]
-    public void ChangeCount_DoesNotMove_WhenTheOwnerGoes()
+    public void Version_DoesNotMove_WhenTheOwnerGoes()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
-        var before = _sync.ChangeCount();
+        var before = _sync.Count();
 
         _portal.OwnerGone();
 
-        Assert.That(_sync.ChangeCount(), Is.EqualTo(before));
+        Assert.That(_sync.Count(), Is.EqualTo(before));
     }
 
     [Test]
-    public void WroteAt_IsTheCountRightAfterTheWrite_AndAForeignCopyMovesPastIt()
+    public void WrittenAt_IsTheVersionRightAfterTheWrite_AndAForeignCopyMovesPastIt()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        var afterWrite = _sync.ChangeCount();
-        var wroteAt = _sync.WroteAt();
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
+        var afterWrite = _sync.Count();
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "written"u8.ToArray() });
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(wroteAt, Is.Not.Null.And.EqualTo(afterWrite));
-            Assert.That(_sync.WroteAt(), Is.EqualTo(wroteAt), "another client's copy is no write of Hydra's");
-            Assert.That(_sync.ChangeCount(), Is.GreaterThan(wroteAt ?? long.MaxValue));
+            Assert.That(written.Count(), Is.Not.Null.And.EqualTo(afterWrite));
+            Assert.That(_sync.Count(), Is.GreaterThan(written.Count() ?? long.MaxValue));
         }
     }
 
     [Test]
-    public void WroteAt_FollowsAClear()
+    public void WrittenAt_OfAClear_IsTheVersionAfterIt()
     {
         _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        _sync.ClearClipboard();
 
-        Assert.That(_sync.WroteAt(), Is.EqualTo(_sync.ChangeCount()));
+        Assert.That(_sync.Cleared().Count(), Is.EqualTo(_sync.Count()));
     }
 
     [Test]
-    public void WroteAt_IsNull_BeforeAnyWrite()
+    public void BeforeAnyWrite_HoldsNoWrite()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        Assert.That(_sync.WroteAt(), Is.Null);
+        Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
     }
 
     // a notice of the owner Hydra's write replaced, delivered after the write, is older than it
     [Test]
     public void OwnerChange_BeforeTheWriteIsConfirmed_IsOlderThanIt()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        var wroteAt = _sync.WroteAt();
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "older"u8.ToArray() });
         _portal.ConfirmOwnWrite();
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(wroteAt));
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.Count(), Is.EqualTo(written.Count()));
+            Assert.That(_sync.StillHolds(written), Is.True);
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
         }
     }
@@ -720,16 +717,15 @@ public class PortalClipboardSyncTests
     [Test]
     public void OwnerChange_ToAWriteNeverConfirmed_CountsOnceTheWaitIsOver()
     {
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        var wroteAt = _sync.WroteAt();
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
         _time.Advance(TimeSpan.FromSeconds(2));
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_sync.ChangeCount(), Is.GreaterThan(wroteAt ?? long.MaxValue));
-            Assert.That(_sync.CanUseEchoFallback(), Is.False);
+            Assert.That(_sync.Count(), Is.GreaterThan(written.Count() ?? long.MaxValue));
+            Assert.That(_sync.StillHolds(written), Is.False);
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied"));
         }
     }
@@ -738,12 +734,11 @@ public class PortalClipboardSyncTests
     public void OwnerChange_AfterTheWriteIsConfirmed_CountsAtOnce()
     {
         _portal.ConfirmsWrites = true;
-        _sync.SetClipboard(new ClipboardSnapshot("written", null, null));
-        var wroteAt = _sync.WroteAt();
+        var written = _sync.Written(new ClipboardSnapshot("written", null, null));
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        Assert.That(_sync.ChangeCount(), Is.EqualTo(wroteAt + 1));
+        Assert.That(_sync.Count(), Is.EqualTo(written.Count() + 1));
     }
 
     // -- the selection, which the portal has none of --
@@ -1064,26 +1059,26 @@ public class PortalClipboardSyncTests
         try
         {
             Assert.That(sync.Connected(), Is.True);
-            var written = sync.SetClipboard(new ClipboardSnapshot("written", "selected", null));
+            var written = sync.Written(new ClipboardSnapshot("written", "selected", null));
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(written?.Text, Is.EqualTo("written"));
+                Assert.That(written.Taken.Text, Is.EqualTo("written"));
                 Assert.That(fallback.Text, Is.EqualTo("written"));
                 Assert.That(fallback.SetClipboardCallCount, Is.EqualTo(1));
                 Assert.That(sync.Read().AsContents().Text, Is.EqualTo("written"));
                 Assert.That(fallback.ReadCallCount, Is.EqualTo(1));
                 Assert.That(sync.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
-                Assert.That(sync.ChangeCount(), Is.EqualTo(fallback.ChangeCount()));
-                Assert.That(sync.WroteAt(), Is.EqualTo(fallback.WroteAt()));
+                Assert.That(sync.Count(), Is.EqualTo(fallback.Count()));
+                Assert.That(written.Count(), Is.EqualTo(fallback.Count()), "the version the fallback's write left");
                 Assert.That(sync.ClearClipboard(), Is.True);
                 Assert.That(fallback.ClearClipboardCallCount, Is.EqualTo(1));
             }
             fallback.HasFileClipboardValue = true;
-            fallback.CanUseEchoFallbackValue = false;
+            fallback.StillHoldsValue = false;
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(sync.HasFileClipboard(), Is.True);
-                Assert.That(sync.CanUseEchoFallback(), Is.False);
+                Assert.That(sync.StillHolds(written), Is.False);
             }
         }
         finally
@@ -1103,7 +1098,7 @@ public class PortalClipboardSyncTests
                 Assert.That(sync.Read().AsContents(), Is.EqualTo(ClipboardContents.Empty));
                 Assert.That(sync.SetClipboard(new ClipboardSnapshot("written", null, null)), Is.Null);
                 Assert.That(sync.ClearClipboard(), Is.False);
-                Assert.That(sync.ChangeCount(), Is.Null);
+                Assert.That(sync.Count(), Is.Null);
                 Assert.That(sync.ReadPrimary().TextOrNone(), Is.Null);
                 Assert.That(sync.SetPrimaryText("selected"), Is.False);
             }
@@ -1127,7 +1122,7 @@ public class PortalClipboardSyncTests
     public void Claim_ReadsTheMastersOwnCopy_AndOffersOnlyWhatItCanServe()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray(), ["text/html"] = "<i>copied</i>"u8.ToArray() });
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
         _sync.Claim();
 
@@ -1136,8 +1131,8 @@ public class PortalClipboardSyncTests
             Assert.That(_portal.Offers.Single(), Is.EquivalentTo((string[])[.. WaylandMime.Text, "text/html"]), "its text as every text type, and its html");
             Assert.That(_portal.Offers.Single(), Does.Not.Contain("text/rtf").And.Not.Contain("image/png").And.Not.Contain("x-kde-passwordManagerHint"));
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(new ClipboardContents("copied", "<i>copied</i>", null, null, false)), "the own copy reads as itself");
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count), "the claim is no copy and no write");
-            Assert.That(_sync.CanUseEchoFallback(), Is.False, "the own copy is the user's, not Hydra's write");
+            Assert.That(_sync.Count(), Is.EqualTo(count), "the claim is no copy and no write");
+            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False, "the own copy is the user's, not Hydra's write");
             Assert.That(_sync.ReadPrimary().TextOrNone(), Is.EqualTo("copied"), "a text copy is still the primary");
         }
     }
@@ -1207,7 +1202,7 @@ public class PortalClipboardSyncTests
         _time.Advance(TimeSpan.FromSeconds(1));
         _portal.OwnerGone();
         var reads = _portal.ReadTypes.Count;
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
         _portal.CaptureActive = true;
 
         _sync.Claim();
@@ -1217,7 +1212,7 @@ public class PortalClipboardSyncTests
             Assert.That(_portal.ReadTypes, Has.Count.EqualTo(reads), "no copy since the last claim: its read still stands");
             Assert.That(_portal.Offers, Has.Count.EqualTo(2), "the session holds the selection no longer, so it is set again");
             Assert.That(_portal.Offers[^1], Is.EqualTo(_portal.Offers[0]));
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count));
+            Assert.That(_sync.Count(), Is.EqualTo(count));
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(new ClipboardContents("copied", "<i>copied</i>", null, null, false)));
             Assert.That(_portal.Transfer("text/html", 1), Is.EqualTo("<i>copied</i>"u8.ToArray()));
         }
@@ -1275,20 +1270,20 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
-        var written = _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null));
+        var written = _sync.Written(new ClipboardSnapshot("from the slave", null, null));
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(written, Is.Not.Null, "the session's selection serves it");
+            Assert.That(written.Taken.Text, Is.EqualTo("from the slave"), "the session's selection serves it");
             Assert.That(_portal.Offers, Has.Count.EqualTo(1), "set once, at the claim");
             Assert.That(_portal.Transfer("text/plain", 1), Is.EqualTo("from the slave"u8.ToArray()));
             Assert.That(_portal.Transfer("STRING", 2), Is.EqualTo("from the slave"u8.ToArray()), "every text type the claim offered");
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count + 1), "a write of Hydra's");
-            Assert.That(_sync.WroteAt(), Is.EqualTo(_sync.ChangeCount()));
+            Assert.That(_sync.Count(), Is.EqualTo(count + 1), "a write of Hydra's");
+            Assert.That(written.Count(), Is.EqualTo(_sync.Count()));
             Assert.That(_sync.Read().AsContents(), Is.SameAs(ClipboardContents.Empty), "Hydra's own write reads as nothing");
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.StillHolds(written), Is.True);
         }
     }
 
@@ -1313,14 +1308,14 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
         var written = _sync.SetClipboard(new ClipboardSnapshot("from the browser", null, null, Html: "<b>from the browser</b>"));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(written, Is.Not.Null);
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count + 1));
+            Assert.That(_sync.Count(), Is.EqualTo(count + 1));
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.EqualTo("from the browser"u8.ToArray()));
             Assert.That(_portal.Transfer("TEXT", 2), Is.EqualTo("from the browser"u8.ToArray()));
             Assert.That(_portal.Transfer("text/html", 3), Is.Null, "never offered, so not served");
@@ -1357,14 +1352,14 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray(), ["image/png"] = Png });
         ClaimThenRelease();
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
         var written = _sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(written, Is.Null, "the selection offers an image the answer has none of, and the portal sets none without the capture");
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count));
+            Assert.That(_sync.Count(), Is.EqualTo(count));
             Assert.That(_portal.Transfer("image/png", 1), Is.EqualTo(Png));
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 2), Is.EqualTo("copied"u8.ToArray()));
         }
@@ -1475,7 +1470,7 @@ public class PortalClipboardSyncTests
     public void AConcealedOwnCopy_IsLeftWithItsOwner()
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "hunter2"u8.ToArray(), ["x-kde-passwordManagerHint"] = "secret"u8.ToArray() });
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
         _sync.Claim();
 
@@ -1483,7 +1478,7 @@ public class PortalClipboardSyncTests
         {
             Assert.That(_portal.Offers, Is.Empty, "the selection stays the password manager's");
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(new ClipboardContents("hunter2", null, null, null, true)), "still read as the user's concealed copy");
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count));
+            Assert.That(_sync.Count(), Is.EqualTo(count));
         }
     }
 
@@ -1550,18 +1545,17 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
-        var cleared = _sync.ClearClipboard();
+        var cleared = _sync.Cleared();
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(cleared, Is.True);
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count + 1), "a write of Hydra's");
+            Assert.That(_sync.Count(), Is.EqualTo(count + 1), "a write of Hydra's");
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.EqualTo(Encoding.UTF8.GetBytes(ClipboardSnapshot.PlaceholderText)));
             Assert.That(_portal.Transfer("x-kde-passwordManagerHint", 2), Is.Null, "never offered");
             Assert.That(_sync.Read().AsContents(), Is.SameAs(ClipboardContents.Empty), "Hydra's own write reads as nothing");
-            Assert.That(_sync.CanUseEchoFallback(), Is.True);
+            Assert.That(_sync.StillHolds(cleared), Is.True);
         }
     }
 
@@ -1580,15 +1574,15 @@ public class PortalClipboardSyncTests
         _portal.ConfirmsWrites = true;
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
         ClaimThenRelease();
-        var count = _sync.ChangeCount();
+        var count = _sync.Count();
 
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied again"u8.ToArray() });
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(_sync.ChangeCount(), Is.EqualTo(count + 1));
+            Assert.That(_sync.Count(), Is.EqualTo(count + 1));
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied again"));
-            Assert.That(_sync.CanUseEchoFallback(), Is.False);
+            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
             Assert.That(_sync.SetClipboard(new ClipboardSnapshot("from the slave", null, null)), Is.Null,
                 "the session no longer holds the selection, and the portal sets none without the capture");
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.Null);
@@ -1624,7 +1618,7 @@ public class PortalClipboardSyncTests
         try
         {
             sync.Connected();
-            sync.ChangeCount();
+            sync.Count();
             sync.SetClipboard(new ClipboardSnapshot("written", null, null));
 
             Assert.That(asked, Is.EqualTo(1));
@@ -1645,13 +1639,13 @@ public class PortalClipboardSyncTests
         var sync = new PortalClipboardSync(_ => Task.FromResult(portals.Dequeue()), () => new NullClipboardSync(), _time, NullLogger.Instance);
         try
         {
-            sync.SetClipboard(new ClipboardSnapshot("written", null, null));
+            var written = sync.Written(new ClipboardSnapshot("written", null, null));
 
             sync.OnSessionLost();
 
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(sync.CanUseEchoFallback(), Is.False);
+                Assert.That(sync.StillHolds(written), Is.False);
                 Assert.That(sync.Read().AsContents().Text, Is.EqualTo("copied meanwhile"));
                 Assert.That(first.Subscribed, Is.False);
                 Assert.That(second.Subscribed, Is.True);

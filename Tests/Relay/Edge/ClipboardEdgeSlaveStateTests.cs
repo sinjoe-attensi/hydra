@@ -291,7 +291,7 @@ public class ClipboardEdgeSlaveStateTests : MasterClipboardFixture
         await Chunk(slave, stream.Chunks[0]);
 
         // the user's copy of files takes the clipboard from Hydra
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         _clipboard.HasFileClipboardValue = true;
         _clipboard.SetupText("report.pdf");
         await Chunks(slave, stream, from: 1);

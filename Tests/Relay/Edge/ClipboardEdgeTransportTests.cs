@@ -249,7 +249,7 @@ public class ClipboardEdgeTransportTests : StyxFixtureBase
         await Begin(slave, stream);
         await Chunk(slave, stream.Chunks[0]);
 
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         _clipboard.SetupText("the user's copy");
         await Chunks(slave, stream, from: 1);
         _clock.Advance(ClipboardStreamReceiver.Watchdog * 2);

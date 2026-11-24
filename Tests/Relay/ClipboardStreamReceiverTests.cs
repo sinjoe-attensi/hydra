@@ -348,7 +348,7 @@ public class ClipboardStreamReceiverTests
         _receiver.OnBegin("b", Split(2, Encode(Push('y'))).Begin);
         _receiver.OnBegin("c", Split(4, Encode(Push('c'))).Begin with { TotalBytes = 0 });
         foreach (var chunk in stream.Chunks[1..]) Chunk("a", chunk);
-        _sync.CanUseEchoFallbackValue = false;
+        _sync.StillHoldsValue = false;
         _receiver.OnBegin("d", Split(3, Encode(Push('z'))).Begin);
         Chunk("d", Split(3, Encode(Push('z'))).Chunks[0]);
         _receiver.OnUnreadable("a", 1);
@@ -392,7 +392,7 @@ public class ClipboardStreamReceiverTests
 
         _receiver.OnBegin("a", stream.Begin);
         Chunk("a", stream.Chunks[0]);
-        _sync.CanUseEchoFallbackValue = false;
+        _sync.StillHoldsValue = false;
         foreach (var chunk in stream.Chunks[1..]) Chunk("a", chunk);
 
         using (Assert.EnterMultipleScope())

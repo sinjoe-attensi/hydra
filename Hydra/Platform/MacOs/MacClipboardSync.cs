@@ -32,7 +32,7 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
     {
         _log = log;
         _pasteboardName = pasteboardName;
-        _lastWrite = new LastWrite(Version, log);
+        _lastWrite = new LastWrite(Counter, log);
         _echo = new ClipboardEchoFilter(_lastWrite.Holds);
         // NSPasteboard lives in AppKit — must be loaded before objc_getClass can find it.
         // Slaves don't open an event tap, so AppKit may not be loaded otherwise.
@@ -133,22 +133,22 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
     private static long ChangeCount(nint pasteboard) => NativeMethods.objc_msgSend_long(pasteboard, NativeMethods.sel_registerName("changeCount"));
 
     // the counter EmulatedPrimarySelection versions by, in a pool of its own
-    public long Version()
+    public long Counter()
     {
         using var pool = new ObjcAutoreleasePool();
         return ChangeCount(GetGeneralPasteboard());
     }
 
     // the same counter; null when there is no pasteboard
-    public long? ChangeCount()
+    public ClipboardVersion? Version
     {
-        using var pool = new ObjcAutoreleasePool();
-        var pasteboard = GetGeneralPasteboard();
-        return pasteboard == nint.Zero ? null : ChangeCount(pasteboard);
+        get
+        {
+            using var pool = new ObjcAutoreleasePool();
+            var pasteboard = GetGeneralPasteboard();
+            return pasteboard == nint.Zero ? null : new ClipboardVersion(ChangeCount(pasteboard));
+        }
     }
-
-    // the count Hydra's last write left, as the write saw it
-    public long? WroteAt() => _lastWrite.At;
 
     // a write made without EmulatedPrimarySelection, which no selection sees; a failure is logged, not thrown
     public ClipboardWrite Write(ClipboardContents contents)
@@ -185,7 +185,7 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
                 marked.Html is { } html ? new FormatWrite(ClipboardFormat.Html, () => WriteString(pasteboard, html, PasteboardTypeHtml)) : null,
                 marked.Rtf is { } rtf ? new FormatWrite(ClipboardFormat.Rtf, () => WriteData(pasteboard, rtf, PasteboardTypeRtf)) : null,
                 marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null);
-        }, leftAt, ChangeCount);
+        }, leftAt, () => Version?.Value);
     }
 
     // every marker, even after one is refused
@@ -224,10 +224,10 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
         }
     }
 
-    public bool CanUseEchoFallback()
+    public bool StillHolds(ClipboardWrite.Written write)
     {
         using var pool = new ObjcAutoreleasePool();
-        return _lastWrite.Holds();
+        return _lastWrite.Holds(write);
     }
 
     // setString:forType: and setData:forType: answer whether the pasteboard took it, as a BOOL: only its low byte is set

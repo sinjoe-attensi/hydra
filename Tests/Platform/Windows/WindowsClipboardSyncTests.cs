@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using Hydra.Platform;
+using Hydra.Relay;
 using Hydra.Platform.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
@@ -71,7 +72,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(Hydra.Clipboard.Read(), Is.InstanceOf<ClipboardRead.Unreadable>(), "unknown, never empty or \"not concealed\"");
-                Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test"), Is.Null);
+                Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test"), Is.Null);
             }
         }
         finally

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Hydra.Platform;
+using Hydra.Relay;
 using Hydra.Platform.Linux;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tests.Setup;
@@ -246,7 +247,7 @@ public class XorgClipboardSyncTests
         owner.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Concealed: true));
         XclipRead("UTF8_STRING"); // barrier, as in RoundTrip_HtmlAndText_BetweenInstances
 
-        var read = ClipboardUtils.ReadWithFallback(reader, null, NullLogger.Instance, "test");
+        var read = ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -364,43 +365,43 @@ public class XorgClipboardSyncTests
     public void EchoFallback_OnlyWhileClipboardIsStillOurs()
     {
         using var owner = new XorgClipboardSync();
-        owner.SetClipboard(new ClipboardSnapshot("ours", null, null));
-        Assert.That(owner.CanUseEchoFallback(), Is.True);
+        var ours = owner.Written(new ClipboardSnapshot("ours", null, null));
+        Assert.That(owner.StillHolds(ours), Is.True);
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("theirs"));
 
-        Assert.That(LosesOwnership(owner), Is.True);
+        Assert.That(LosesOwnership(owner, ours), Is.True);
     }
 
     // SelectionClear reaches the owner's event thread on its own time
-    private static bool LosesOwnership(XorgClipboardSync owner) => SpinWait.SpinUntil(() => !owner.CanUseEchoFallback(), Bound);
+    private static bool LosesOwnership(XorgClipboardSync owner, ClipboardWrite.Written write) => SpinWait.SpinUntil(() => !owner.StillHolds(write), Bound);
 
     [Test]
-    public void ChangeCount_MovesOnAWriteAndOnAnotherClientsCopy()
+    public void Version_MovesOnAWriteAndOnAnotherClientsCopy()
     {
         using var owner = new XorgClipboardSync();
-        var start = owner.ChangeCount();
-        owner.SetClipboard(new ClipboardSnapshot("ours", null, null));
-        var afterWrite = owner.ChangeCount();
+        var start = owner.Count();
+        var ours = owner.Written(new ClipboardSnapshot("ours", null, null));
+        var afterWrite = owner.Count();
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("ours"));
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(afterWrite, Is.Not.EqualTo(start));
-            Assert.That(LosesOwnership(owner), Is.True);
+            Assert.That(LosesOwnership(owner, ours), Is.True);
             Assert.That(Moves(owner, afterWrite), Is.True, "an identical copy moves it too");
         }
     }
 
     [Test]
-    public void ChangeCount_MovesWhenAnOwnerTakesTheClipboardAgainWithTheSameContent()
+    public void Version_MovesWhenAnOwnerTakesTheClipboardAgainWithTheSameContent()
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
         otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
-        Assert.That(LosesOwnership(hydra), Is.True, "pre-condition: the other client owns it");
+        Assert.That(LosesOwnership(hydra, ours), Is.True, "pre-condition: the other client owns it");
         var before = Settled(hydra);
 
         // the same client, the same content: no SelectionClear reaches hydra, only XFixes' owner notice
@@ -410,33 +411,33 @@ public class XorgClipboardSyncTests
     }
 
     [Test]
-    public void ChangeCount_OneOwnerChange_MovesOnce_CountedBeforeTheNotice()
+    public void Version_OneOwnerChange_MovesOnce_CountedBeforeTheNotice()
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
         var before = Settled(hydra);
 
         otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
-        _ = hydra.ChangeCount(); // most likely before SelectionClear and the owner notice land
+        _ = hydra.Count(); // most likely before SelectionClear and the owner notice land
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(LosesOwnership(hydra), Is.True);
+            Assert.That(LosesOwnership(hydra, ours), Is.True);
             Assert.That(Settled(hydra), Is.EqualTo(before + 1));
         }
     }
 
     [Test]
-    public void ChangeCount_OneOwnerChange_MovesOnce_CountedAfterTheNotice()
+    public void Version_OneOwnerChange_MovesOnce_CountedAfterTheNotice()
     {
         using var hydra = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
         var before = Settled(hydra);
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("theirs"));
 
-        var lost = LosesOwnership(hydra);
+        var lost = LosesOwnership(hydra, ours);
         Thread.Sleep(300); // the owner notice lands before the counter is next asked
 
         using (Assert.EnterMultipleScope())
@@ -449,71 +450,82 @@ public class XorgClipboardSyncTests
     // with XFixes too, the counter moves as soon as another client owns CLIPBOARD (a read sees it at once), never waiting
     // on the owner notice, and the notice for that same change counts nothing more
     [Test]
-    public void ChangeCount_AnotherClientOwnsTheClipboard_MovesAtOnce_AndOnlyOnce()
+    public void Version_AnotherClientOwnsTheClipboard_MovesAtOnce_AndOnlyOnce()
     {
         using var hydra = new XorgClipboardSync();
         using var otherApp = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        var ours = hydra.Written(new ClipboardSnapshot("ours", null, null));
         var before = Settled(hydra);
 
         otherApp.SetClipboard(new ClipboardSnapshot("theirs", null, null));
         // a round trip on its own connection: the server has made it the owner before hydra asks
-        _ = otherApp.ChangeCount();
-        var atOnce = hydra.ChangeCount();
+        _ = otherApp.Count();
+        var atOnce = hydra.Count();
 
         using (Assert.EnterMultipleScope())
         {
             Assert.That(atOnce, Is.EqualTo(before + 1), "counted on the first ask after the owner changed");
-            Assert.That(LosesOwnership(hydra), Is.True);
+            Assert.That(LosesOwnership(hydra, ours), Is.True);
             Assert.That(Settled(hydra), Is.EqualTo(before + 1));
         }
     }
 
     [Test]
-    public void WroteAt_IsTheCountRightAfterTheWrite_AndAForeignCopyMovesPastIt()
+    public void WrittenAt_IsTheVersionRightAfterTheWrite_AndAForeignCopyMovesPastIt()
     {
         using var hydra = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
-        var afterWrite = hydra.ChangeCount();
-        var wroteAt = hydra.WroteAt();
+        var written = hydra.Written(new ClipboardSnapshot("ours", null, null));
+        var afterWrite = hydra.Count();
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("ours"));
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(wroteAt, Is.Not.Null.And.EqualTo(afterWrite));
+            Assert.That(written.Count(), Is.Not.Null.And.EqualTo(afterWrite));
             Assert.That(Moves(hydra, afterWrite), Is.True);
-            Assert.That(hydra.ChangeCount(), Is.GreaterThan(wroteAt ?? long.MaxValue));
-            Assert.That(hydra.WroteAt(), Is.EqualTo(wroteAt), "another client's copy is no write of Hydra's");
+            Assert.That(hydra.Count(), Is.GreaterThan(written.Count() ?? long.MaxValue));
         }
+    }
+
+    // PRIMARY is apart from CLIPBOARD: taking it never moves the clipboard's version
+    [Test]
+    public void Version_DoesNotMoveOnTheSelectionAlone()
+    {
+        using var hydra = new XorgClipboardSync();
+        hydra.SetClipboard(new ClipboardSnapshot("ours", null, null));
+        var before = Settled(hydra);
+
+        hydra.SetPrimaryText("selected");
+
+        Assert.That(Settled(hydra), Is.EqualTo(before));
     }
 
     [Test]
     public void ReadAll_AnotherClientsCopyEqualToHydrasLastWrite_IsRead()
     {
         using var hydra = new XorgClipboardSync();
-        hydra.SetClipboard(new ClipboardSnapshot("foo", null, null));
+        var ours = hydra.Written(new ClipboardSnapshot("foo", null, null));
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("foo"));
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(LosesOwnership(hydra), Is.True);
+            Assert.That(LosesOwnership(hydra, ours), Is.True);
             Assert.That(hydra.Read().AsContents().Text, Is.EqualTo("foo"));
         }
     }
 
     // XFixes' notice reaches the event thread on its own time
-    private static bool Moves(XorgClipboardSync sync, long? from) => SpinWait.SpinUntil(() => sync.ChangeCount() != from, Bound);
+    private static bool Moves(XorgClipboardSync sync, long? from) => SpinWait.SpinUntil(() => sync.Count() != from, Bound);
 
     // the counter once every notice already on its way has landed
     private static long? Settled(XorgClipboardSync sync)
     {
-        var last = sync.ChangeCount();
+        var last = sync.Count();
         while (true)
         {
             Thread.Sleep(300);
-            var now = sync.ChangeCount();
+            var now = sync.Count();
             if (now == last) return now;
             last = now;
         }
@@ -534,7 +546,7 @@ public class XorgClipboardSyncTests
             Assert.That(targets, Does.Contain("UTF8_STRING"));
             Assert.That(targets, Does.Contain("x-kde-passwordManagerHint"), "so Klipper never keeps the placeholder");
             Assert.That(XclipRead("x-kde-passwordManagerHint"), Is.EqualTo("secret"u8.ToArray()));
-            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, NullLogger.Instance, "test")!.HasClipboard, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, ClipboardChanges.Of(owner.Clipboard).Last, NullLogger.Instance, "test")!.HasClipboard, Is.False);
             Assert.That(XclipRead("UTF8_STRING", "primary"), Is.EqualTo(Encoding.UTF8.GetBytes("selected")));
         }
     }
@@ -550,7 +562,7 @@ public class XorgClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(reader.Read().AsContents().Text, Is.EqualTo(ClipboardSnapshot.PlaceholderText));
-            Assert.That(ClipboardUtils.ReadWithFallback(reader, null, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
+            Assert.That(ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
         }
     }
 

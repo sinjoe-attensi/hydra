@@ -43,7 +43,7 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
     {
         _log = log;
         _owner = CreateOwnerWindow();
-        _lastWrite = new LastWrite(Version, log);
+        _lastWrite = new LastWrite(Counter, log);
         _echo = new ClipboardEchoFilter(_lastWrite.Holds);
     }
 
@@ -137,15 +137,12 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
 
     public bool HoldsFiles() => NativeMethods.IsClipboardFormatAvailable(NativeMethods.CF_HDROP);
 
-    public bool CanUseEchoFallback() => _lastWrite.Holds();
+    public bool StillHolds(ClipboardWrite.Written write) => _lastWrite.Holds(write);
 
     // the sequence number, which EmulatedPrimarySelection versions by too
-    public long Version() => NativeMethods.GetClipboardSequenceNumber();
+    public long Counter() => NativeMethods.GetClipboardSequenceNumber();
 
-    public long? ChangeCount() => Version();
-
-    // the count Hydra's last write left, as the write saw it
-    public long? WroteAt() => _lastWrite.At;
+    public ClipboardVersion? Version => new ClipboardVersion(Counter());
 
     // the first image format there is, as it lies on the clipboard, so converting it waits until the clipboard is closed
     private static ImageRead? ReadOpenImage()
@@ -239,7 +236,7 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
                     if (NativeMethods.GetClipboardOwner() == OwnerWindow) left(after);
                 });
             }
-        }, leftAt, ChangeCount);
+        }, leftAt, () => Counter());
     }
 
     // what it wrote, null when it could not empty the clipboard

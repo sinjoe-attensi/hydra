@@ -20,17 +20,18 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
     public int ClearClipboardCallCount { get; private set; }
     public bool HasFileClipboardValue { get; set; }
 
-    // another app taking the clipboard is a copy, which moves the change counter
-    public bool CanUseEchoFallbackValue
+    // whether the clipboard still holds Hydra's write, whichever it was (StillHolds); another app taking the clipboard is a
+    // copy, which moves the change counter
+    public bool StillHoldsValue
     {
-        get => _canUseEchoFallback;
+        get => _stillHolds;
         set
         {
-            if (_canUseEchoFallback && !value) _changes++;
-            _canUseEchoFallback = value;
+            if (_stillHolds && !value) _changes++;
+            _stillHolds = value;
         }
     }
-    private bool _canUseEchoFallback = true;
+    private bool _stillHolds = true;
 
     // the change counter: every user copy and every one of Hydra's writes and clears moves it; unsupported while false
     public bool ChangeCountSupported { get; set; } = true;
@@ -90,21 +91,22 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
 
     public bool HoldsFiles() => HasFileClipboardValue;
 
-    public bool CanUseEchoFallback() => CanUseEchoFallbackValue;
+    public bool StillHolds(ClipboardWrite.Written write) => StillHoldsValue;
 
-    public long? ChangeCount()
+    public ClipboardVersion? Version
     {
-        OnChangeCount?.Invoke();
-        return ChangeCountSupported ? _changes : null;
+        get
+        {
+            OnChangeCount?.Invoke();
+            return ChangeCountSupported ? new ClipboardVersion(_changes) : null;
+        }
     }
 
     // runs as the change counter is read, to see where it is read from or act between the reads
     public Action? OnChangeCount { get; set; }
 
-    // the count Hydra's own last write or clear left, as the platforms report it
+    // the count Hydra's own last write or clear left, as the platforms report it in Written.At
     private long? _wroteAt;
-
-    public long? WroteAt() => ChangeCountSupported ? _wroteAt : null;
 
     // runs as a write ends, failed or not, as a copy landing during it
     public Action? AfterWrite { get; set; }

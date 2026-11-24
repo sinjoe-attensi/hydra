@@ -184,7 +184,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     }
 
     // under _lock: ResendFrom, with now the change counter read before the lock
-    private int? ResendFromLocked(string host, long? now)
+    private int? ResendFromLocked(string host, ClipboardVersion? now)
     {
         if (Standing(host, now) is { } untaken) return untaken.From;
         if (!_hosts.TryGetValue(host, out var pulls)) return null;
@@ -193,7 +193,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
 
     // under _lock: whether the user copied on the master since a pull went out at sentAt against hash: by the counter,
     // now, read before the lock; without one, the known clipboard is neither that nor Hydra's own write
-    private bool CopiedSince(long? sentAt, ulong? against, long? now) =>
+    private bool CopiedSince(ClipboardVersion? sentAt, ulong? against, ClipboardVersion? now) =>
         _changes.CopiedSince(sentAt, now) ?? (_known.Hash != against && _known.Hash != _wrote);
 
     // whether pull is the one whose answer streams in to its host
@@ -312,7 +312,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     // under _lock: the answer to pull was not taken, so host's next pull asks a resend from the first such pull still
     // standing, unless a copy made on the master since it went out outranks that answer; now: the change counter, read
     // before the lock
-    private void NotTaken(PendingPull pull, long? now)
+    private void NotTaken(PendingPull pull, ClipboardVersion? now)
     {
         var host = pull.Ref.Host;
         if (CopiedSince(pull.SentAt, pull.Against.Hash, now)) return;
@@ -325,7 +325,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     // (without a counter: the known clipboard is as it was when recorded, or Hydra's own write). A newer answer changing
     // the clipboard drops it in Supersede; Hydra's own writes and a selection alone never do. now: the change counter,
     // read before the lock
-    private Untaken? Standing(string host, long? now)
+    private Untaken? Standing(string host, ClipboardVersion? now)
     {
         if (!_untaken.TryGetValue(host, out var untaken)) return null;
         if (!CopiedSince(untaken.SentAt, untaken.Known, now)) return untaken;
@@ -524,7 +524,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     {
         var cleared = answer.Cleared == true && ClearConcealed(host);
         var write = new AppliedWrite();
-        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host, write), _ => write.Replaced);
+        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host, write), _ => write.Written);
         // the placeholder in place of a concealed copy whose markers were refused is an empty clipboard, Hydra's own
         var refused = write.MarkersRefused;
         if (refused) _echo.Forget();
@@ -667,14 +667,14 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
 
     // sentAt: the change counter when it went out, null where the platform keeps none; settled: completed once it is
     // neither out, streaming nor held, and no write is under way (Settle)
-    private sealed record PendingPull(OutstandingPull Ref, ClipboardBaseline Against, long? SentAt)
+    private sealed record PendingPull(OutstandingPull Ref, ClipboardBaseline Against, ClipboardVersion? SentAt)
     {
         public TaskCompletionSource Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     // the first pull to a host whose answer was not taken: its id, the change counter when it went out, and the known
     // clipboard's hash as it stands
-    private sealed record Untaken(int From, long? SentAt, ulong? Known);
+    private sealed record Untaken(int From, ClipboardVersion? SentAt, ulong? Known);
 
     // for: the id of the newer pull whose answer it waits on; contentHash: the clipboard it carries, null for an unchanged one
     private sealed record HeldAnswer(PendingPull Pull, ClipboardPullResponseMessage Answer, int For, ulong? ContentHash);

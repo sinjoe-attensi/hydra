@@ -275,7 +275,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         await Chunk(relay, stream.Chunks[0]);
         var setBefore = clipboard.SetClipboardCallCount;
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         await Chunks(relay, stream, from: 1);
 
         using (Assert.EnterMultipleScope())
@@ -651,7 +651,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         await Begin(relay, stream);
         await Chunk(relay, stream.Chunks[0]);
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("copied here");
         await Chunk(relay, stream.Chunks[1]);
         await service.Flush();
@@ -1409,7 +1409,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         await Chunk(relay, stream.Chunks[0]);
         EnterLeftHost(platform, relay);
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("copied here");
         await Chunks(relay, stream, from: 1);
         await service.Flush();
@@ -1476,7 +1476,7 @@ public class ClipboardStreamRoutingTests : MasterClipboardFixture
         var stream = StreamedAnswer(1, new ClipboardPullResponseMessage(PullIdTo(relay, "remote"), null, ImagePng: BigImage(2)));
         await Begin(relay, stream);
         await Chunk(relay, stream.Chunks[0]);
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("y");
 
         EnterLeftHost(platform, relay);

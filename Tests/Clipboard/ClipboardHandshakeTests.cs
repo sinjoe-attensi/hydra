@@ -565,7 +565,7 @@ public class ClipboardHandshakeTests
 
         Assert.That(slave.OnHash(new ClipboardHashMessage(null, Pending: true), "master"), Is.EqualTo(PushNeed.None));
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("streamed", null, null)), "master");
 
         using (Assert.EnterMultipleScope())
@@ -586,7 +586,7 @@ public class ClipboardHandshakeTests
 
         slave.OnHash(new ClipboardHashMessage(null, Pending: true), "master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("streamed", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
         slave.OnPush(new ClipboardPushMessage("streamed", selection), "master");
@@ -666,7 +666,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, _ => pending);
         slave.Begun("master", pending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, pending), "master");
 
@@ -723,7 +723,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.OnPush(new ClipboardPushMessage("pushed"), "master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.StableHash("another")), "master");
 
@@ -738,7 +738,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         Assert.That(slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master").Text, Is.EqualTo("copied here"));
 
         // the master copied newer since; a flick across here brings no hash, only the pull on leaving
@@ -754,7 +754,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "other");
 
         var answer = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.StableHash("newer")), "master");
@@ -771,7 +771,7 @@ public class ClipboardHandshakeTests
         slave.OnPush(new ClipboardPushMessage("pushed"), "master");
         // the user copies the same content again, no longer Hydra's write
         sync.SetupText("pushed");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.StableHash("newer")), "master");
 
@@ -789,7 +789,7 @@ public class ClipboardHandshakeTests
     {
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("copied here");
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master");
 
@@ -808,7 +808,7 @@ public class ClipboardHandshakeTests
         slave.Entered("master");
         slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("entry");
 
         var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master");
@@ -830,7 +830,7 @@ public class ClipboardHandshakeTests
         slave.Entered("master");
         slave.OnPush(new ClipboardPushMessage("older"), "master");
         sync.RefusesMarkersValue = true;
-        var at = sync.ChangeCount();
+        var at = sync.Version;
 
         var failed = slave.OnPush(new ClipboardPushMessage("hunter2", Concealed: true), "master");
         var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("older", null, null)), "master");
@@ -929,7 +929,7 @@ public class ClipboardHandshakeTests
         master.Begun("b");
         // the user copies y on the master; the cursor enters a with its entry hash deferred (no read), the user copies z
         // there and leaves
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("y");
         var toA = master.Pull("a");
 
@@ -953,7 +953,7 @@ public class ClipboardHandshakeTests
         master.TakePullAnswer("a", new ClipboardPullResponseMessage(toA.PullId, "from a"));
         var toB = master.Pull("b");
         var toC = master.Pull("c");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("from a");
 
         var refused = master.RefuseStream(new OutstandingPull("b", toB.PullId));
@@ -993,7 +993,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync { ChangeCountSupported = false };
         var master = new ClipboardMaster(sync, Log);
         var toA = master.Pull("a");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("copied on the master");
 
         master.TakePullAnswer("a", new ClipboardPullResponseMessage(toA.PullId, "from a"));
@@ -1062,7 +1062,7 @@ public class ClipboardHandshakeTests
         Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master"), Is.EqualTo(PushNeed.Clipboard));
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", null, null)), "master");
 
@@ -1082,7 +1082,7 @@ public class ClipboardHandshakeTests
         slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         var selection = new string('s', 5000);
 
         Assert.That(slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("late", selection, null)), "master"), Is.EqualTo(PushNeed.Selection));
@@ -1116,7 +1116,7 @@ public class ClipboardHandshakeTests
         slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("entry", null, null)), "master");
         slave.OnPush(new ClipboardPushMessage("entry"), "master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         slave.Entered("master");
 
@@ -1132,7 +1132,7 @@ public class ClipboardHandshakeTests
         slave.OnPush(new ClipboardPushMessage("pushed"), "master");
         slave.Entered("master");
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var need = slave.OnHash(ClipboardWire.ToHash(new ClipboardSnapshot("newer", null, null)), "master");
 
@@ -1356,7 +1356,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         var first = slave.OnPull(new ClipboardPullMessage(1), "master");
         sync.ClearClipboard();
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var second = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.ClipboardHash(Password)), "master");
         var third = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.ClipboardHash(Password)), "master");
@@ -1391,7 +1391,7 @@ public class ClipboardHandshakeTests
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         slave.OnPull(new ClipboardPullMessage(1), "master");
         sync.ClearClipboard();
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
 
         var answer = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.StableHash("x")), "master");
 
@@ -1662,7 +1662,7 @@ public class ClipboardHandshakeTests
         var first = master.Pull("a");
         master.TakePullAnswer("a", new ClipboardPullResponseMessage(first.PullId, "older from a"));
         sync.RefusesMarkersValue = true;
-        var at = sync.ChangeCount();
+        var at = sync.Version;
 
         var second = master.Pull("a");
         var taken = master.TakePullAnswer("a", new ClipboardPullResponseMessage(second.PullId, "hunter2", Concealed: true));
@@ -1726,7 +1726,7 @@ public class ClipboardHandshakeTests
         var at = changes.Now();
         sync.AfterWrite = () => sync.SetupText("copied meanwhile");
 
-        changes.Write(() => sync.SetClipboard(new ClipboardSnapshot("x", null, null)), w => w != null);
+        changes.Write(() => sync.Write(new ClipboardContents("x", null, null, null, false)));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1743,7 +1743,7 @@ public class ClipboardHandshakeTests
         var at = changes.Now();
         sync.AfterWrite = () => sync.SetupText("copied meanwhile");
 
-        changes.Write(() => sync.SetClipboard(new ClipboardSnapshot("x", null, null)), w => w != null);
+        changes.Write(() => sync.Write(new ClipboardContents("x", null, null, null, false)));
 
         Assert.That(changes.CopiedSince(at), Is.True);
     }
@@ -1755,7 +1755,7 @@ public class ClipboardHandshakeTests
         var changes = ClipboardChanges.Of(sync);
         var at = changes.Now();
 
-        changes.Write(() => sync.SetClipboard(new ClipboardSnapshot("x", null, null)), w => w != null);
+        changes.Write(() => sync.Write(new ClipboardContents("x", null, null, null, false)));
 
         using (Assert.EnterMultipleScope())
         {
@@ -1988,7 +1988,7 @@ public class ClipboardHandshakeTests
         master.Hash();
         master.Pull("a");
 
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("z on the master");
         master.Hash();
 
@@ -2005,7 +2005,7 @@ public class ClipboardHandshakeTests
         var master = new ClipboardMaster(sync, Log);
         master.Hash();
         master.Pull("a");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         sync.SetupText("z on the master");
         master.Hash();
 
@@ -2312,7 +2312,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master");
 
         var plain = slave.OnPull(new ClipboardPullMessage(2, ClipboardUtils.StableHash("older")), "master");
@@ -2334,7 +2334,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master");
 
         var answer = slave.OnPull(new ClipboardPullMessage(3, ClipboardUtils.StableHash("newer"), ResendFrom: 2), "master");
@@ -2350,7 +2350,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master");
 
         var need = slave.OnHash(new ClipboardHashMessage(ClipboardUtils.StableHash("older"), ResendFrom: 1), "master");
@@ -2372,7 +2372,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("copied here");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(1, ClipboardUtils.StableHash("older")), "master");
 
         var need = slave.OnHash(new ClipboardHashMessage(ClipboardUtils.StableHash("newer"), ResendFrom: resendFrom), "master");
@@ -2404,7 +2404,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("x on a");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         var first = slave.OnPull(new ClipboardPullMessage(5, ClipboardUtils.StableHash("older")), "master");
 
         var resend = slave.OnPull(new ClipboardPullMessage(8, ClipboardUtils.StableHash("older"), ResendFrom: 5), "master");
@@ -2468,7 +2468,7 @@ public class ClipboardHandshakeTests
         var sync = new FakeClipboardSync();
         var slave = new ClipboardSlave(sync, Log, NothingPending);
         sync.SetupText("x on a");
-        sync.CanUseEchoFallbackValue = false;
+        sync.StillHoldsValue = false;
         slave.OnPull(new ClipboardPullMessage(5, ClipboardUtils.StableHash("older")), "master");
 
         slave.OnHash(new ClipboardHashMessage(null, Pending: true, ResendFrom: 5), "master");
@@ -2490,12 +2490,12 @@ public class ClipboardHandshakeTests
         var master = new ClipboardMaster(onMaster, Log);
         var slave = new ClipboardSlave(onA, Log, NothingPending);
         onA.SetupText("x on a");
-        onA.CanUseEchoFallbackValue = false;
+        onA.StillHoldsValue = false;
         var taken = master.Pull("a");
         master.TakePullAnswer("a", slave.OnPull(taken, "master"));
         Assert.That(onMaster.Text, Is.EqualTo("x on a"), "pre-condition: taken");
 
-        onMaster.CanUseEchoFallbackValue = false;
+        onMaster.StillHoldsValue = false;
         onMaster.SetupText("z on the master");
         master.Hash();
         var lost = master.Pull("a");

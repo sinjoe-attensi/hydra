@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using Hydra.Platform;
+using Hydra.Relay;
 using Tests.Setup;
 using Hydra.Platform.MacOs;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -85,7 +86,7 @@ public class MacClipboardSyncTests : EmulatedPrimarySelectionContract
         WriteForeignCopy("secret", "org.nspasteboard.ConcealedType");
         var concealed = Hydra.Clipboard.Read().AsContents();
         Clear();
-        var placeholder = ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test");
+        var placeholder = ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {

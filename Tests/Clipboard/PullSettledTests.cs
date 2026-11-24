@@ -19,8 +19,7 @@ public class PullSettledTests
         public List<Task> Sent { get; } = [];
         public ClipboardRead Read() => Inner.Read();
         public ClipboardWrite Write(ClipboardContents contents) => Inner.Write(contents);
-        public long? ChangeCount() => Inner.ChangeCount();
-        public long? WroteAt() => Inner.WroteAt();
+        public ClipboardVersion? Version => Inner.Version;
         public void PullSent(Task settled) => Sent.Add(settled);
     }
 

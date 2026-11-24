@@ -122,7 +122,7 @@ public class ClipboardEdgeRecopyTests : MasterClipboardFixture
         var olderId = slave.Sent.Of<ClipboardStreamBeginMessage>(MessageKind.ClipboardStreamBegin, Master).Single().Id;
 
         var x2 = BigImage(2, 2);
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupImage(x2);
         await Pull(slave, 2);
         slave.Reliable.Release();

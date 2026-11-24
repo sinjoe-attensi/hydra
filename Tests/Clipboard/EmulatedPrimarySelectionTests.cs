@@ -51,7 +51,7 @@ public class EmulatedPrimarySelectionTests
 
     private sealed class OsClipboard(EmulatedPrimarySelectionTests os) : ISelectionlessClipboard
     {
-        public long Version() => os._version;
+        public long Counter() => os._version;
 
         public SelectionRead ReadTextCopy()
         {
@@ -148,13 +148,62 @@ public class EmulatedPrimarySelectionTests
     {
         // Windows reports no version when another app owns the clipboard after the write
         var last = new LastWrite(() => _version, NullLogger.Instance);
-        last.Write(_ =>
+        var written = last.Write(_ =>
         {
             _version++;
             return ClipboardContents.Empty;
         }, _ => { }, () => _version);
 
-        Assert.That(last.Holds(), Is.False);
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(last.Holds(), Is.False);
+            Assert.That(last.Holds((ClipboardWrite.Written)written), Is.False, "at the counter after it, which is no version it reported");
+        }
+    }
+
+    [Test]
+    public void Holds_AWrite_OnlyWhileNothingReplacedIt()
+    {
+        var last = new LastWrite(() => _version, NullLogger.Instance);
+        var earlier = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
+        var later = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(last.Holds(earlier), Is.False, "Hydra's own later write replaced it");
+            Assert.That(last.Holds(later), Is.True);
+            Assert.That(last.Holds(new ClipboardWrite.Written(ClipboardContents.Empty, null)), Is.False, "a write at no version is none");
+        }
+        UserCopies("written");
+        Assert.That(last.Holds(later), Is.False, "the user's copy replaced it");
+    }
+
+    // a failed write still reports where it left the clipboard, as Windows' failed clear and macOS' clear before a failure
+    [Test]
+    public void Holds_NotAWriteAFailedOneMovedPast()
+    {
+        var last = new LastWrite(() => _version, NullLogger.Instance);
+        var written = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
+
+        var failed = last.Write(left =>
+        {
+            LeavingVersion(left);
+            return null;
+        }, _ => { }, () => _version);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(failed, Is.InstanceOf<ClipboardWrite.NotReplaced>());
+            Assert.That(last.Holds(written), Is.False);
+            Assert.That(last.Holds(), Is.True, "the echo filter's: the clipboard is still what Hydra's last write left");
+        }
+    }
+
+    private ClipboardContents LeavingVersion(Action<long> left)
+    {
+        _version++;
+        left(_version);
+        return ClipboardContents.Empty;
     }
 
     [Test]

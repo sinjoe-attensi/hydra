@@ -32,7 +32,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         var stale = relay.Sent.Of<ClipboardStreamBeginMessage>(MessageKind.ClipboardStreamBegin, "remote").Single().Id;
 
         var copy = BigImage(2);
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupImage(copy);
         // off the remote, which answers from its emptied clipboard, and back on
         LeaveRemote(platform);
@@ -71,7 +71,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         await Begin(slave, stream);
         await Chunk(slave, stream.Chunks[0]);
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("copied on A");
         // the master pulls with the hash of what it is streaming
         var pull = new ClipboardPullMessage(8, stream.Begin.ContentHash);
@@ -138,7 +138,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, new ClipboardHashMessage(null, Pending: true).ToSaneJson());
         var emptied = clipboard.Text;
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("copied on C");
         // A's copy lands on the master, which offers it to C
         var fromA = BigImage(2);
@@ -174,7 +174,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         var olderId = slave.Sent.Of<ClipboardStreamBeginMessage>(MessageKind.ClipboardStreamBegin, Master).Single().Id;
 
         var newer = BigImage(2);
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupImage(newer);
         ClipboardPullResponseMessage? first = null;
         if (answerCompletesFirst)
@@ -224,7 +224,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         await slave.Sent.WaitFor(MessageKind.ClipboardStreamBegin, 1, Master);
 
         var newer = BigImage(2);
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupImage(newer);
         slave.Reliable.Release();
         await SentAnswer(slave, begins: 1);
@@ -342,7 +342,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         await relay.Sent.WaitFor(MessageKind.ClipboardStreamBegin, 1, "remote");
         var first = relay.Sent.Of<ClipboardStreamBeginMessage>(MessageKind.ClipboardStreamBegin, "remote").Single().Id;
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupImage(BigImage(2));
         await SimulatePullRequest(relay);
         var newest = BigImage(3);
@@ -428,7 +428,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         await Begin(relay, stream);
         await Chunks(relay, stream, to: before);
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("copied on the master");
         var setBefore = clipboard.SetClipboardCallCount;
         await Chunks(relay, stream, from: before);
@@ -511,7 +511,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         var bundle = await StartMaster(clipboard);
         var onA = new FakeClipboardSync();
         onA.SetupText("copied on A");
-        onA.CanUseEchoFallbackValue = false;
+        onA.StillHoldsValue = false;
         var a = Slave(onA);
 
         clipboard.WriteFailsValue = true;
@@ -539,7 +539,7 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         var bundle = await StartMaster(clipboard);
         var onA = new FakeClipboardSync();
         onA.SetupText("copied on A");
-        onA.CanUseEchoFallbackValue = false;
+        onA.StillHoldsValue = false;
         var a = Slave(onA);
         clipboard.WriteFailsValue = true;
         await LeaveAndAnswer(bundle, a, 1);
@@ -573,14 +573,14 @@ public class ClipboardEdgeCopyTests : MasterClipboardFixture
         var bundle = await StartMaster(clipboard);
         var onA = new FakeClipboardSync();
         onA.SetupText("copied on A");
-        onA.CanUseEchoFallbackValue = false;
+        onA.StillHoldsValue = false;
         var a = Slave(onA);
         VisitAndLeaveRemote(bundle.Platform);
         var pull = bundle.Relay.Sent.Of(MessageKind.ClipboardPull, "remote").Last();
         await a.SimulateReceive(Master, pull.Kind, pull.Json);
         await a.Sent.WaitFor(MessageKind.ClipboardPullResponse, 1, Master);
 
-        clipboard.CanUseEchoFallbackValue = false;
+        clipboard.StillHoldsValue = false;
         clipboard.SetupText("z on the master");
         TransitionTestHelper.EnterRemote(bundle.Platform);
         await bundle.Service.HashReads();

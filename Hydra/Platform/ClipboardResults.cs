@@ -38,9 +38,9 @@ public abstract record SelectionRead
     public sealed record Unreadable(string Reason, Exception? Cause = null) : SelectionRead;
 }
 
-// one write of the clipboard: what it took, at the count it left on the change counter (WroteAt, else the counter right
+// one write of the clipboard: what it took, at the version it left (the count the write itself saw, else the counter right
 // after it; null where the platform keeps none); a clipboard it did not replace; or one that could not be read where the
-// write needed to
+// write needed to. A write that did not replace the clipboard may still have moved the counter
 public abstract record ClipboardWrite
 {
     private ClipboardWrite() { }

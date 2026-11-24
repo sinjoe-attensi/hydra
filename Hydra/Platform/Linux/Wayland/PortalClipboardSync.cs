@@ -176,24 +176,26 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
 
     public bool HoldsFiles() => Resolve(wait: false) is { Fallback: { } fallback } && fallback.Clipboard.HoldsFiles();
 
-    public bool CanUseEchoFallback()
+    // the portal's: whether the session still owns the selection with Hydra's last write, whichever it was
+    public bool StillHolds(ClipboardWrite.Written write)
     {
-        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.CanUseEchoFallback();
+        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.StillHolds(write);
         lock (_lock) return OwnsWrite();
     }
 
-    public long? ChangeCount()
+    public ClipboardVersion? Version
     {
-        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.ChangeCount();
-        lock (_lock)
+        get
         {
-            if (!_everConnected) return null;
-            Settle();
-            return _count;
+            if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.Version;
+            lock (_lock)
+            {
+                if (!_everConnected) return null;
+                Settle();
+                return new ClipboardVersion(_count);
+            }
         }
     }
-
-    public long? WroteAt() => Resolve(wait: false) is { Fallback: { } fallback } ? fallback.Clipboard.WroteAt() : _lastWrite.At;
 
     public ClipboardWrite Write(ClipboardContents contents) => Resolve(wait: true) switch
     {
@@ -209,7 +211,7 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
         lock (_lock) portal = _portal;
         if (portal == null) return new ClipboardWrite.NotReplaced("the portal's clipboard is not connected");
         contents = ClipboardUtils.Writing(contents);
-        return _lastWrite.Write(left => Offer(portal, contents, left), leftAt, ChangeCount);
+        return _lastWrite.Write(left => Offer(portal, contents, left), leftAt, () => Version?.Value);
     }
 
     // the latest pull the master sent, which a transfer waits for before serving
@@ -958,7 +960,7 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
     // the portal's own clipboard, as the emulated selection beside it sees it
     private sealed class PortalOnly(PortalClipboardSync sync) : ISelectionlessClipboard
     {
-        public long Version() => sync.Count();
+        public long Counter() => sync.Count();
 
         public SelectionRead ReadTextCopy() => sync.ReadTextCopy();
 
@@ -968,11 +970,9 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
 
         public ClipboardRead Read() => sync.Read();
 
-        public bool CanUseEchoFallback() => sync.CanUseEchoFallback();
+        public ClipboardVersion? Version => sync.Version;
 
-        public long? ChangeCount() => sync.ChangeCount();
-
-        public long? WroteAt() => sync.WroteAt();
+        public bool StillHolds(ClipboardWrite.Written write) => sync.StillHolds(write);
     }
 
     private sealed record GenerationRead(long Generation, ClipboardContents Read);

@@ -192,7 +192,7 @@ public class SlaveClipboardStreamTests
         await Begin(slave, stream);
         await Chunk(slave, stream.Chunks[0]);
 
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         _clipboard.SetupText("the user's copy");
         await Chunks(slave, stream, from: 1);
         await Pull(slave, 8, ContentHash);
@@ -216,7 +216,7 @@ public class SlaveClipboardStreamTests
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, new ClipboardHashMessage(null, Pending: true).ToSaneJson());
 
         _clipboard.SetupText("the user's copy");
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         var landed = ClipboardWire.ToHash(new ClipboardSnapshot(BigText('a'), null, null));
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, landed.ToSaneJson());
         await Pull(slave, 9, landed.Hash);
@@ -239,7 +239,7 @@ public class SlaveClipboardStreamTests
         var slave = Slave();
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, new ClipboardHashMessage(ContentHash, Visit: 3).ToSaneJson());
         _clipboard.SetupText("the user's copy");
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         var stream = StreamedPush(4, new ClipboardPushMessage(BigText('a')));
 
         await Begin(slave, stream);
@@ -261,7 +261,7 @@ public class SlaveClipboardStreamTests
         var slave = Slave();
         await slave.SimulateReceive(Master, MessageKind.ClipboardHash, new ClipboardHashMessage(ContentHash, Visit: 3).ToSaneJson());
         _clipboard.SetupText("the user's copy");
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
 
         await slave.SimulateReceive(Master, MessageKind.ClipboardPush, new ClipboardPushMessage("the master's").ToSaneJson());
 
@@ -933,7 +933,7 @@ public class SlaveClipboardStreamTests
     {
         _clipboard.SetupText("old on the slave");
         _clipboard.ClearFailsValue = true;
-        _clipboard.CanUseEchoFallbackValue = false;
+        _clipboard.StillHoldsValue = false;
         var slave = Slave();
         var text = BigText('a');
         var stream = StreamedPush(6, new ClipboardPushMessage(text));
@@ -943,7 +943,7 @@ public class SlaveClipboardStreamTests
         var retried = _clipboard.ClearClipboardCallCount;
         // the clipboard frees up: the next chunk's clear takes, and the clipboard is Hydra's again
         _clipboard.ClearFailsValue = false;
-        _clipboard.CanUseEchoFallbackValue = true;
+        _clipboard.StillHoldsValue = true;
         await Chunk(slave, stream.Chunks[1]);
         var emptied = new { _clipboard.ClearClipboardCallCount, _clipboard.Text };
         await Chunks(slave, stream, from: 2);

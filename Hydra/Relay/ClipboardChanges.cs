@@ -3,57 +3,56 @@ using Hydra.Platform;
 
 namespace Hydra.Relay;
 
-// the OS clipboard's change counter and the count Hydra's own last write left on it, one per clipboard, so a write made
-// as master or as slave is never taken for the user's copy by the other. A copy since a point is the counter moved past
-// both; every answer is null where the platform keeps no counter
+// Hydra's last write of a clipboard, one per clipboard, so a write made as master or as slave is never taken for the
+// user's copy by the other. A copy since a point is the clipboard's version moved past it and past that write's; every
+// answer of the version is null where the platform keeps none
 public sealed class ClipboardChanges
 {
     private static readonly ConditionalWeakTable<IClipboard, ClipboardChanges> All = [];
 
-    private readonly IClipboard _sync;
-    private readonly Lock _lock = new();
-    private long? _wroteAt;
+    // Hydra's last write before it wrote here: one at no version, which no platform that tracks versions or ownership
+    // holds, and one that tracks neither always does, as it answered before Hydra's first write
+    public static readonly ClipboardWrite.Written NothingWritten = new(ClipboardContents.Empty, null);
 
-    private ClipboardChanges(IClipboard sync) => _sync = sync;
+    private readonly IClipboard _clipboard;
+    private ClipboardWrite.Written _last = NothingWritten;
 
-    public static ClipboardChanges Of(IClipboard sync) => All.GetValue(sync, s => new ClipboardChanges(s));
+    private ClipboardChanges(IClipboard clipboard) => _clipboard = clipboard;
 
-    public long? Now() => _sync.ChangeCount();
+    public static ClipboardChanges Of(IClipboard clipboard) => All.GetValue(clipboard, c => new ClipboardChanges(c));
 
-    // Hydra's own write, noting the count it left only when wrote says it took: the count the platform reports for that
-    // write, else the counter after it, so a failed write, a selection alone, or a copy landing during the write is never
-    // taken for Hydra's own
-    public T Write<T>(Func<T> write, Func<T, bool> wrote)
+    // Hydra's last write here that replaced the clipboard; NothingWritten before any
+    public ClipboardWrite.Written Last => Volatile.Read(ref _last);
+
+    public ClipboardVersion? Now() => _clipboard.Version;
+
+    // Hydra's own write, kept as the last only when took finds it replaced the clipboard, at the version the write reported,
+    // so a failed write, a selection alone, or a copy landing during the write is never taken for Hydra's own
+    public T Write<T>(Func<T> write, Func<T, ClipboardWrite.Written?> took)
     {
         var result = write();
-        if (wrote(result) && (_sync.WroteAt() ?? _sync.ChangeCount()) is { } at)
-            lock (_lock)
-                _wroteAt = at;
+        if (took(result) is { } written) Volatile.Write(ref _last, written);
         return result;
     }
 
-    public bool Write(Func<bool> write) => Write(write, w => w);
+    // whether it replaced the clipboard
+    public bool Write(Func<ClipboardWrite> write) => Write(write, w => w as ClipboardWrite.Written) is ClipboardWrite.Written;
 
-    // whether the user copied since at: the counter moved past it and past Hydra's own last write; null when the platform
+    // whether the user copied since at: the version moved past it and past Hydra's own last write; null when the platform
     // keeps no counter, or kept none at
-    public bool? CopiedSince(long? at) => CopiedSince(at, _sync.ChangeCount());
+    public bool? CopiedSince(ClipboardVersion? at) => CopiedSince(at, _clipboard.Version);
 
-    // as CopiedSince(at), against now, the counter as read earlier, so a caller holding a lock reads it before taking it
-    public bool? CopiedSince(long? at, long? now)
+    // as CopiedSince(at), against now, the version as read earlier, so a caller holding a lock reads it before taking it
+    public bool? CopiedSince(ClipboardVersion? at, ClipboardVersion? now)
     {
         if (at == null || now == null) return null;
-        long? wrote;
-        lock (_lock)
-            wrote = _wroteAt;
-        return now != at && now != wrote;
+        return now != at && now != Last.At;
     }
 
-    // whether the clipboard is still Hydra's own last write, nothing copied since; never, before Hydra wrote here; null
-    // when the platform keeps no counter
-    public bool? StillOwnWrite()
-    {
-        if (_sync.ChangeCount() is not { } now) return null;
-        lock (_lock)
-            return _wroteAt == now;
-    }
+    // whether the clipboard still holds Hydra's last write here (IClipboard.StillHolds)
+    public bool StillHolds() => _clipboard.StillHolds(Last);
+
+    // whether the clipboard is still Hydra's own last write by the version, nothing copied since: never, before Hydra wrote
+    // here; StillHolds where the platform keeps no counter
+    public bool StillOwnWrite() => _clipboard.Version is { } now ? Last.At == now : StillHolds();
 }

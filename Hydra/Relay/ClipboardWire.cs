@@ -19,12 +19,13 @@ public sealed record ClipboardBaseline(ulong? Hash, string? Text, string? Primar
 // what a slave's hash check found it needs from the master: nothing, the selection alone, or the clipboard
 public enum PushNeed { None, Selection, Clipboard }
 
-// what the clipboard's write of a peer's copy did, once one was made: Wrote is what it returned, null when it did not
-// replace the clipboard
+// what the clipboard's write of a peer's copy did, once one was made: Written is the write that replaced the clipboard,
+// and Wrote what it took, the selection beside it; both null when it did not replace the clipboard
 public sealed class AppliedWrite
 {
     public bool Tried { get; private set; }
     public ClipboardSnapshot? Wrote { get; private set; }
+    public ClipboardWrite.Written? Written { get; private set; }
 
     // the write left no clipboard format: not replaced, or every format refused (the placeholder counts as one)
     public bool Failed => Tried && Wrote is not { HasClipboard: true };
@@ -32,12 +33,10 @@ public sealed class AppliedWrite
     // the placeholder went in place of a concealed copy whose markers were refused: Hydra's own write, an empty clipboard
     public bool MarkersRefused => Wrote is { IsClear: true };
 
-    // whether it replaced the clipboard, which is then Hydra's own write
-    public bool Replaced => Wrote != null;
-
-    public void Took(ClipboardSnapshot? wrote)
+    public void Took(ClipboardWrite write, ClipboardSnapshot? wrote)
     {
         Tried = true;
+        Written = write as ClipboardWrite.Written;
         Wrote = wrote;
     }
 }

@@ -27,7 +27,7 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
     // whether the clipboard is Hydra's own write, which counts as seen so
     private bool Ours()
     {
-        if (!platform.Clipboard.CanUseEchoFallback()) return false;
+        if (!_changes.StillHolds()) return false;
         _oursAt = ++_clock;
         return true;
     }
@@ -124,7 +124,7 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
         // host's clipboard replaces what this host last answered it with
         master.AnsweredConcealed = false;
         var write = new AppliedWrite();
-        var applied = _changes.Write(() => ClipboardWire.ApplyPush(platform, push, selectionFor, log, host, write), _ => write.Replaced);
+        var applied = _changes.Write(() => ClipboardWire.ApplyPush(platform, push, selectionFor, log, host, write), _ => write.Written);
         if (write.MarkersRefused)
         {
             // the placeholder in place of a concealed copy whose markers were refused: an empty clipboard, Hydra's own
@@ -363,18 +363,18 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
     private sealed record AwaitedPush(int? Visit);
 
     // where the change counter stood, null where the platform keeps none
-    private sealed record ChangePoint(long? Count);
+    private sealed record ChangePoint(ClipboardVersion? Count);
 
     // what the slave keeps per master
     private sealed class PerMaster
     {
         // the clock and the change counter when its visit began (none: one visit since the start)
         public long VisitFrom { get; set; } = -1;
-        public long? VisitAt { get; set; }
+        public ClipboardVersion? VisitAt { get; set; }
         // the content hash last synced with it either way (answered to it, or applied from it), nothing new to it, and
         // the change counter then
         public ulong? SyncedWith { get; set; }
-        public long? SyncedAt { get; set; }
+        public ClipboardVersion? SyncedAt { get; set; }
         // the pull whose full answer last synced it, which a resend from it or an older pull answers again; null once a
         // push that wrote the clipboard synced it, or a pull matched a clipboard other than the synced one
         public int? SyncedBy { get; set; }

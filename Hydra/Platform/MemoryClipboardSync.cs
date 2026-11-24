@@ -34,10 +34,13 @@ public sealed class MemoryClipboardSync : IClipboardPlatform, IClipboard
         return new SelectionWrite.Kept();
     }
 
-    public long? ChangeCount()
+    public ClipboardVersion? Version
     {
-        lock (_lock)
-            return _changes;
+        get
+        {
+            lock (_lock)
+                return new ClipboardVersion(_changes);
+        }
     }
 
     // a clear keeps the placeholder, which a read finds as it stands

@@ -247,8 +247,8 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
         lock (_dataLock) return _lastTaken;
     }
 
-    // whether CLIPBOARD is still Hydra's write: SelectionClear forgets it once another client takes it
-    public bool CanUseEchoFallback()
+    // whether CLIPBOARD is still Hydra's, whichever write was last: SelectionClear forgets it once another client takes it
+    public bool StillHolds(ClipboardWrite.Written write)
     {
         lock (_dataLock)
             return _ownedClipboard != null;
@@ -257,17 +257,20 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
     // X11 keeps no counter, so this one moves on Hydra's own writes, on XFixes' owner notices, and on an owner change
     // seen here (a read already sees the new owner before its notice is handled); without XFixes, on SelectionClear too,
     // when a copy by the owner it already was goes unseen
-    public long? ChangeCount()
+    public ClipboardVersion? Version
     {
-        lock (_dataLock)
+        get
         {
-            NoteOwner();
-            return _counter.Count;
+            lock (_dataLock)
+            {
+                NoteOwner();
+                return new ClipboardVersion(_counter.Count);
+            }
         }
     }
 
     // the count Hydra's own last write or clear left, not the counter as it stands
-    public long? WroteAt()
+    private long? WroteAt()
     {
         lock (_dataLock)
             return _wroteAt;
@@ -379,7 +382,7 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
 
     // another client took CLIPBOARD, perhaps again with what it already held: a copy, counted once by when it was
     // taken (OwnerCounter: Hydra's own taking was counted by Own, a notice arriving after Hydra took it back is older
-    // than that write, and an owner ChangeCount already counted spends its credit)
+    // than that write, and an owner Version already counted spends its credit)
     private void OwnerChanged(ref XEvent ev)
     {
         if (ev.FixesSelectionSelection != _atomClipboard) return;

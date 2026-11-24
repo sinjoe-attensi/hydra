@@ -89,7 +89,8 @@ internal sealed class WaylandClipboardSync : IClipboardPlatform, IClipboard, IDi
         return new SelectionWrite.Kept();
     }
 
-    public bool CanUseEchoFallback() => OwnsClipboard();
+    // whether wl-copy still serves Hydra's last write
+    public bool StillHolds(ClipboardWrite.Written write) => OwnsClipboard();
 
     public ClipboardWrite Write(ClipboardContents contents)
     {
