@@ -59,7 +59,7 @@ public class SlaveRelayConnection : RelayConnection
     // clock times the clipboard stream watchdog: tests alone pass one, since nothing else reaches the receiver, and DI,
     // which registers no TimeProvider, leaves it the system's
     public SlaveRelayConnection(IHydraProfile profile, ILogger<RelayConnection> log, IPlatformOutput output, IScreenDetector screens, IWorldState peerState,
-        ICursorHider cursorHider, IScreenSaverSync screenSaverSync, IClipboardSync clipboardSync, FileTransferService fileTransfer,
+        ICursorHider cursorHider, IScreenSaverSync screenSaverSync, IClipboardPlatform clipboardSync, FileTransferService fileTransfer,
         IFileSelectionDetector selectionDetector, IOsdNotification osd, IActivityTracker activityTracker, IDormancyState dormancy,
         TimeProvider? clock = null, IWindowFocus? windowFocus = null, IRelayReady? relayReady = null)
         : base(profile, log, peerState, relayReady)

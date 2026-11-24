@@ -7,8 +7,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Platform.Windows;
 
+// no primary selection: Hydra keeps an EmulatedPrimarySelection beside it (ClipboardPlatform.Compose)
 [SupportedOSPlatform("windows")]
-public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
+public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessClipboard, IDisposable
 {
     // registered once per process; Windows caches the value
     private static readonly uint CfPng = NativeMethods.RegisterClipboardFormat("PNG");
@@ -27,13 +28,12 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
     private const int OpenTries = 10;
 
     // Hydra's own threads take turns at the clipboard, so none spends another's retries waiting on it. Nothing under it
-    // takes CopiedPrimary's gate (echo filtering waits until it is let go), since that gate is held around ReadTextCopy,
-    // which takes this lock
+    // takes EmulatedPrimarySelection's gate, since that gate is held around ReadTextCopy, which takes this lock
     private static readonly Lock OpenLock = new();
 
     private readonly ILogger<WindowsClipboardSync> _log;
     private readonly ClipboardEchoFilter _echo;
-    private readonly CopiedPrimary _primary;
+    private readonly LastWrite _lastWrite;
 
     // dedicated owner window for the clipboard — passing NULL to OpenClipboard makes EmptyClipboard
     // set a NULL owner, which per MSDN causes SetClipboardData to fail. A real HWND fixes that.
@@ -43,9 +43,12 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
     {
         _log = log;
         _owner = CreateOwnerWindow();
-        _primary = new CopiedPrimary(() => NativeMethods.GetClipboardSequenceNumber(), ReadTextCopy, log);
-        _echo = new ClipboardEchoFilter(_primary.Owns);
+        _lastWrite = new LastWrite(Version, log);
+        _echo = new ClipboardEchoFilter(_lastWrite.Holds);
     }
+
+    public IClipboard Clipboard => this;
+    public IPrimarySelection? PrimarySelection => null;
 
     // message-only window created once on the constructing (main) thread. No message pump is needed:
     // OpenClipboard/SetClipboardData do not require one — only clipboard-listener notifications do.
@@ -73,7 +76,7 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         RawRead? raw;
         try
         {
-            raw = WithClipboard(() => HasFileClipboard()
+            raw = WithClipboard(() => HoldsFiles()
                 ? null
                 : new RawRead(ReadOpenText(), ReadOpenImage(), ReadOpenHtml(), ReadOpenRtf(), IsOpenConcealed()));
         }
@@ -106,8 +109,8 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         }
     }
 
-    // CopiedPrimary's readTextCopy, by clipboard format; one attempt, since it runs under CopiedPrimary's gate
-    private SelectionRead ReadTextCopy()
+    // by clipboard format; one attempt, since it runs under EmulatedPrimarySelection's gate
+    public SelectionRead ReadTextCopy()
     {
         try
         {
@@ -132,19 +135,17 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         return allowed is { Length: >= 4 } && BitConverter.ToUInt32(allowed) == 0;
     }
 
-    public SelectionRead ReadPrimary() => _primary.Read();
+    public bool HoldsFiles() => NativeMethods.IsClipboardFormatAvailable(NativeMethods.CF_HDROP);
 
-    public bool SetPrimaryText(string text) => _primary.Relay(text);
+    public bool CanUseEchoFallback() => _lastWrite.Holds();
 
-    public bool HasFileClipboard() => NativeMethods.IsClipboardFormatAvailable(NativeMethods.CF_HDROP);
+    // the sequence number, which EmulatedPrimarySelection versions by too
+    public long Version() => NativeMethods.GetClipboardSequenceNumber();
 
-    public bool CanUseEchoFallback() => _primary.Owns();
-
-    // the sequence number CopiedPrimary versions by
-    public long? ChangeCount() => NativeMethods.GetClipboardSequenceNumber();
+    public long? ChangeCount() => Version();
 
     // the count Hydra's last write left, as the write saw it
-    public long? WroteAt() => _primary.WrittenAt();
+    public long? WroteAt() => _lastWrite.At;
 
     // the first image format there is, as it lies on the clipboard, so converting it waits until the clipboard is closed
     private static ImageRead? ReadOpenImage()
@@ -202,34 +203,47 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         }
     }
 
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
+    // a write made without EmulatedPrimarySelection, which no selection sees; a failure is logged, not thrown
+    public ClipboardWrite Write(ClipboardContents contents)
     {
-        ClipboardSnapshot? written = null;
+        try
+        {
+            return Write(contents, _ => { });
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to write clipboard");
+            return new ClipboardWrite.NotReplaced(ex.Message);
+        }
+    }
+
+    public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
+    {
+        contents = ClipboardUtils.Writing(contents);
         // the DIB beside an image is converted before the clipboard is opened
-        var dib = contents.ImagePng is { } png ? PngToDibV5(png) : null;
-        var replaced = _primary.Write(contents.PrimaryText, leftAt =>
+        var dib = contents.Png is { } png ? PngToDibV5(png) : null;
+        return _lastWrite.Write(left =>
         {
             lock (OpenLock)
             {
                 if (!OpenClipboard(OpenTries))
                 {
                     _log.LogWarning("Failed to open clipboard to write it after {Tries} tries", OpenTries);
-                    return false;
+                    return null;
                 }
-                return WhileOpen(() => (written = WriteOpenClipboard(contents, dib)) != null, () =>
+                return WhileOpen(() => WriteOpenClipboard(contents, dib), () =>
                 {
                     // after closing, which moves the sequence number too; read before asking who owns the clipboard, so
                     // another app writing after either leaves it untaken, never taken as ours
                     var after = NativeMethods.GetClipboardSequenceNumber();
-                    if (NativeMethods.GetClipboardOwner() == OwnerWindow) leftAt(after);
+                    if (NativeMethods.GetClipboardOwner() == OwnerWindow) left(after);
                 });
             }
-        });
-        return replaced ? written : null;
+        }, leftAt, ChangeCount);
     }
 
     // what it wrote, null when it could not empty the clipboard
-    private ClipboardSnapshot? WriteOpenClipboard(ClipboardSnapshot contents, byte[]? dib)
+    private ClipboardContents? WriteOpenClipboard(ClipboardContents contents, byte[]? dib)
     {
         if (!NativeMethods.EmptyClipboard()) return null;
         contents = ClipboardUtils.WriteMarkers(_log, contents, WriteConcealedMarkers, WriteNoHistoryMarkers);
@@ -238,7 +252,7 @@ public sealed class WindowsClipboardSync : IClipboardSync, IDisposable
         // image first (legacy image pasters pick the first supported format); rich before plain text
         // so rich-aware apps prefer HTML/RTF over CF_UNICODETEXT.
         return ClipboardUtils.WriteAll(_log, contents,
-            contents.ImagePng is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteImageToOpenClipboard(png, dib)) : null,
+            contents.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteImageToOpenClipboard(png, dib)) : null,
             contents.Html is { } html ? new FormatWrite(ClipboardFormat.Html, () => WriteGlobalMemory(CfHtmlFormat, NullTerminated(CfHtml.Wrap(html)))) : null,
             contents.Rtf is { } rtf ? new FormatWrite(ClipboardFormat.Rtf, () => WriteGlobalMemory(CfRtf, NullTerminated(rtf))) : null,
             contents.Text is { } text

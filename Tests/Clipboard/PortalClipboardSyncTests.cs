@@ -37,7 +37,7 @@ public class PortalClipboardSyncTests
     [TearDown]
     public async Task TearDown() => await _sync.DisposeAsync();
 
-    private PortalClipboardSync Create(IPortalClipboard? portal, IClipboardSync? fallback = null) =>
+    private PortalClipboardSync Create(IPortalClipboard? portal, IClipboardPlatform? fallback = null) =>
         new(_ => Task.FromResult(portal), () => fallback ?? new NullClipboardSync(), _time, NullLogger.Instance);
 
     // -- reads --

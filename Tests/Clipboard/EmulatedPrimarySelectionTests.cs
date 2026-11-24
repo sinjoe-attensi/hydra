@@ -5,14 +5,16 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Tests.Clipboard;
 
 [TestFixture]
-public class CopiedPrimaryTests
+public class EmulatedPrimarySelectionTests
 {
     // the OS clipboard: its change counter and the text of what is on it
     private long _version;
     private string? _text;
     private bool _busy;
     private int _reads;
-    private CopiedPrimary _primary = null!;
+    // the write the clipboard makes next: it reports the version it leaves, and says whether it replaced the clipboard
+    private Func<Action<long>, bool> _writing = _ => true;
+    private EmulatedPrimarySelection _primary = null!;
 
     [SetUp]
     public void SetUp()
@@ -21,11 +23,7 @@ public class CopiedPrimaryTests
         _text = null;
         _busy = false;
         _reads = 0;
-        _primary = new CopiedPrimary(() => _version, () =>
-        {
-            _reads++;
-            return _busy ? new SelectionRead.Unreadable("busy") : _text is { } text ? new SelectionRead.Text(text) : new SelectionRead.None();
-        }, NullLogger.Instance);
+        _primary = new EmulatedPrimarySelection(new OsClipboard(this), NullLogger.Instance);
     }
 
     private void UserCopies(string? text)
@@ -34,13 +32,43 @@ public class CopiedPrimaryTests
         _text = text;
     }
 
-    private void HydraWrites(string? incoming, string written) => _primary.Write(incoming, leftAt =>
+    // Hydra's write through the selection, the selection beside it set first, as ClipboardUtils.ApplyPreservingFiles
+    // makes it; whether it replaced the clipboard
+    private bool Write(string? incoming, Func<Action<long>, bool> write)
+    {
+        if (incoming != null) _primary.Write(incoming);
+        _writing = write;
+        return _primary.Clipboard.Write(new ClipboardContents("written", null, null, null, false)) is ClipboardWrite.Written;
+    }
+
+    private void HydraWrites(string? incoming, string written) => Write(incoming, leftAt =>
     {
         _version++;
         _text = written;
         leftAt(_version);
         return true;
     });
+
+    private sealed class OsClipboard(EmulatedPrimarySelectionTests os) : ISelectionlessClipboard
+    {
+        public long Version() => os._version;
+
+        public SelectionRead ReadTextCopy()
+        {
+            os._reads++;
+            return os._busy ? new SelectionRead.Unreadable("busy") : os._text is { } text ? new SelectionRead.Text(text) : new SelectionRead.None();
+        }
+
+        public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
+        {
+            var write = os._writing;
+            return write(leftAt) ? ClipboardUtils.Written(contents, null) : new ClipboardWrite.NotReplaced("not replaced");
+        }
+
+        public ClipboardWrite Write(ClipboardContents contents) => Write(contents, _ => { });
+
+        public ClipboardRead Read() => new ClipboardRead.Contents(ClipboardContents.Empty);
+    }
 
     [Test]
     public void NothingYet_IsTheUsersTextCopy()
@@ -54,7 +82,7 @@ public class CopiedPrimaryTests
     public void RelayedSelection_StandsWhileTheClipboardIsUnchanged()
     {
         _text = "older copy";
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
     }
@@ -62,7 +90,7 @@ public class CopiedPrimaryTests
     [Test]
     public void CopyAfterTheRelay_IsThePrimary()
     {
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
         UserCopies("copied since");
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied since"));
@@ -71,7 +99,7 @@ public class CopiedPrimaryTests
     [Test]
     public void CopyWithoutText_LeavesTheRelayedSelection()
     {
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
         UserCopies(null);
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
@@ -95,29 +123,38 @@ public class CopiedPrimaryTests
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("written"));
     }
 
+    // the platform's own record of Hydra's last write, which the emulated selection no longer keeps
     [Test]
     public void Owns_OnlyWhileTheClipboardIsHydrasLastWrite()
     {
-        Assert.That(_primary.Owns(), Is.False, "nothing written yet");
+        var last = new LastWrite(() => _version, NullLogger.Instance);
+        Assert.That(last.Holds(), Is.False, "nothing written yet");
 
-        HydraWrites(null, "written");
-        Assert.That(_primary.Owns(), Is.True);
+        last.Write(left =>
+        {
+            _version++;
+            _text = "written";
+            left(_version);
+            return ClipboardContents.Empty;
+        }, _ => { }, () => _version);
+        Assert.That(last.Holds(), Is.True);
 
         UserCopies("written");
-        Assert.That(_primary.Owns(), Is.False, "the same text copied again is the user's");
+        Assert.That(last.Holds(), Is.False, "the same text copied again is the user's");
     }
 
     [Test]
     public void Owns_NotAfterAWriteThatNeverSaidWhereItLeftTheClipboard()
     {
         // Windows reports no version when another app owns the clipboard after the write
-        _primary.Write(null, _ =>
+        var last = new LastWrite(() => _version, NullLogger.Instance);
+        last.Write(_ =>
         {
             _version++;
-            return true;
-        });
+            return ClipboardContents.Empty;
+        }, _ => { }, () => _version);
 
-        Assert.That(_primary.Owns(), Is.False);
+        Assert.That(last.Holds(), Is.False);
     }
 
     [Test]
@@ -143,7 +180,7 @@ public class CopiedPrimaryTests
     [Test]
     public void BusyClipboard_IsTriedAgain()
     {
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
         UserCopies("copied");
         _busy = true;
         var whileBusy = _primary.Read().TextOrNone();
@@ -161,7 +198,7 @@ public class CopiedPrimaryTests
     public void CopySeen_StaysThePrimaryAfterALaterImageCopy()
     {
         // once noticed, a text copy is the newest selection until something newer comes
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
         UserCopies("copied");
         _primary.Read().TextOrNone();
         UserCopies(null);
@@ -173,7 +210,7 @@ public class CopiedPrimaryTests
     public void Write_KeepsACopyMadeSinceAsThePrimary()
     {
         // the clipboard is about to be overwritten: the user's copy stays the primary, an older relay cannot return
-        _primary.Relay("selected on linux");
+        _primary.Write("selected on linux");
         UserCopies("copied since");
         HydraWrites(null, "written");
 
@@ -194,7 +231,7 @@ public class CopiedPrimaryTests
     {
         // a read racing the write sees the half-written clipboard under a new version
         string? during = null;
-        _primary.Write("relayed selection", _ =>
+        Write("relayed selection", _ =>
         {
             UserCopies("half written");
             during = _primary.Read().TextOrNone();
@@ -208,9 +245,9 @@ public class CopiedPrimaryTests
     public void Read_DuringTheSecondOfTwoOverlappingWrites_IsNotACopy()
     {
         string? during = null;
-        _primary.Write("relayed selection", _ =>
+        Write("relayed selection", _ =>
         {
-            _primary.Write(null, leftAt =>
+            Write(null, leftAt =>
             {
                 leftAt(2);
                 return true;
@@ -228,7 +265,7 @@ public class CopiedPrimaryTests
     {
         // a write that never learned its version must not make the clipboard Hydra wrote earlier look like a copy
         HydraWrites("relayed selection", "written");
-        _primary.Write(null, _ => false);
+        Write(null, _ => false);
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("relayed selection"));
     }
@@ -237,10 +274,10 @@ public class CopiedPrimaryTests
     public void SelectionRelayedDuringAWrite_IsNotUndoneByIt()
     {
         // the write finishing reports an older version than the relay saw; the newer one stands
-        _primary.Write(null, leftAt =>
+        Write(null, leftAt =>
         {
             UserCopies("older copy");
-            _primary.Relay("relayed during the write");
+            _primary.Write("relayed during the write");
             leftAt(_version - 1);
             return false;
         });
@@ -251,7 +288,7 @@ public class CopiedPrimaryTests
     [Test]
     public void WriteThatThrows_IsAFailedWriteThatStillEnds()
     {
-        var replaced = _primary.Write("relayed selection", _ => throw new InvalidOperationException("write failed"));
+        var replaced = Write("relayed selection", _ => throw new InvalidOperationException("write failed"));
         UserCopies("copied after");
 
         using (Assert.EnterMultipleScope())
@@ -266,7 +303,7 @@ public class CopiedPrimaryTests
     {
         UserCopies("copied");
         _busy = true;
-        _primary.Write(null, _ => false);
+        Write(null, _ => false);
         _busy = false;
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("copied"));
@@ -276,7 +313,7 @@ public class CopiedPrimaryTests
     public void RelayedSelection_OutranksACopyMadeBeforeIt()
     {
         UserCopies("older copy");
-        _primary.Relay("newer selection");
+        _primary.Write("newer selection");
 
         Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("newer selection"));
     }

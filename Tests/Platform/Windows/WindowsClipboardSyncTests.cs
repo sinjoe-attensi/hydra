@@ -11,9 +11,9 @@ namespace Tests.Platform.Windows;
 [TestFixture]
 [NonParallelizable]
 [SupportedOSPlatform("windows")]
-public class WindowsClipboardSyncTests : CopiedPrimaryContract
+public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
 {
-    protected override IClipboardSync Create() => new WindowsClipboardSync(NullLogger<WindowsClipboardSync>.Instance);
+    protected override IClipboardPlatform Create() => new WindowsClipboardSync(NullLogger<WindowsClipboardSync>.Instance);
 
     [TestCase("ExcludeClipboardContentFromMonitorProcessing", 1u)]
     [TestCase("CanIncludeInClipboardHistory", 0u)]
@@ -21,7 +21,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("secret", format, value));
 
-        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -29,7 +29,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("copied", "CanIncludeInClipboardHistory", 1));
 
-        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("copied"));
+        Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
@@ -45,8 +45,8 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
         using (Assert.EnterMultipleScope())
         {
             Assert.That(applied, Is.Null);
-            Assert.That(Hydra.HasFileClipboard(), Is.True);
-            Assert.That(Hydra.Read().AsContents().Text, Is.Null);
+            Assert.That(Hydra.Clipboard.HoldsFiles(), Is.True);
+            Assert.That(Hydra.Clipboard.Read().AsContents().Text, Is.Null);
         }
     }
 
@@ -70,7 +70,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
 
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(Hydra.Read(), Is.InstanceOf<ClipboardRead.Unreadable>(), "unknown, never empty or \"not concealed\"");
+                Assert.That(Hydra.Clipboard.Read(), Is.InstanceOf<ClipboardRead.Unreadable>(), "unknown, never empty or \"not concealed\"");
                 Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test"), Is.Null);
             }
         }
@@ -84,7 +84,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     [Test]
     public void Clear_KeepsThePlaceholderOutOfHistoryAndCloud_ButNotFromMonitors()
     {
-        Hydra.ClearClipboard();
+        Clear();
 
         Assert.That(NativeMethods.OpenClipboard(nint.Zero), Is.True);
         try
@@ -108,7 +108,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     [Test]
     public void ReadAll_ReadsEveryFormatAndTheMarkersAtOnce()
     {
-        Hydra.SetClipboard(new ClipboardSnapshot("hunter2", null, null, Html: "<b>hunter2</b>", Concealed: true));
+        Write(new ClipboardSnapshot("hunter2", null, null, Html: "<b>hunter2</b>", Concealed: true));
         using var otherApp = (WindowsClipboardSync)Create();
 
         Assert.That(otherApp.Read().AsContents(), Is.EqualTo(new ClipboardContents("hunter2", "<b>hunter2</b>", null, null, Secret: true)));
@@ -118,7 +118,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
     public void ReadAll_ReadsEveryFormat()
     {
         byte[] rtf = "{\\rtf1 hunter2}"u8.ToArray();
-        Hydra.SetClipboard(new ClipboardSnapshot("hunter2", null, Png, Html: "<b>hunter2</b>", Rtf: rtf));
+        Write(new ClipboardSnapshot("hunter2", null, Png, Html: "<b>hunter2</b>", Rtf: rtf));
         using var otherApp = (WindowsClipboardSync)Create();
 
         var all = otherApp.Read().AsContents();
@@ -131,7 +131,7 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
             Assert.That(all.Html, Is.EqualTo("<b>hunter2</b>"));
             Assert.That(all.Rtf, Is.EqualTo(rtf));
             Assert.That(all.Secret, Is.False);
-            Assert.That(otherApp.HasFileClipboard(), Is.False);
+            Assert.That(otherApp.HoldsFiles(), Is.False);
         }
     }
 
@@ -147,9 +147,9 @@ public class WindowsClipboardSyncTests : CopiedPrimaryContract
             {
                 if (t % 2 == 0)
                 {
-                    if (Hydra.SetClipboard(new ClipboardSnapshot($"copy {t} {i}", null, Png)) == null) Interlocked.Increment(ref failures);
+                    if (Write(new ClipboardSnapshot($"copy {t} {i}", null, Png)) is not ClipboardWrite.Written) Interlocked.Increment(ref failures);
                 }
-                else if ((own ?? Hydra).Read() is ClipboardRead.Unreadable) Interlocked.Increment(ref failures);
+                else if ((own ?? Hydra.Clipboard).Read() is ClipboardRead.Unreadable) Interlocked.Increment(ref failures);
             }
         })).ToList();
 

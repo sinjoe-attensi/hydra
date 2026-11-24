@@ -3,7 +3,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Hydra.Platform.MacOs;
 
-public sealed class MacClipboardSync : IClipboardSync
+// no primary selection: Hydra keeps an EmulatedPrimarySelection beside it (ClipboardPlatform.Compose)
+public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboard
 {
     private const string PasteboardTypeString = "public.utf8-plain-text";
     private const string PasteboardTypePng = "public.png";
@@ -21,7 +22,7 @@ public sealed class MacClipboardSync : IClipboardSync
 
     private readonly ILogger<MacClipboardSync> _log;
     private readonly ClipboardEchoFilter _echo;
-    private readonly CopiedPrimary _primary;
+    private readonly LastWrite _lastWrite;
     private readonly string? _pasteboardName;
 
     public MacClipboardSync(ILogger<MacClipboardSync> log) : this(log, null) { }
@@ -31,12 +32,15 @@ public sealed class MacClipboardSync : IClipboardSync
     {
         _log = log;
         _pasteboardName = pasteboardName;
-        _primary = new CopiedPrimary(() => ChangeCount(GetGeneralPasteboard()), () => ReadTextCopy(GetGeneralPasteboard()), log);
-        _echo = new ClipboardEchoFilter(_primary.Owns);
+        _lastWrite = new LastWrite(Version, log);
+        _echo = new ClipboardEchoFilter(_lastWrite.Holds);
         // NSPasteboard lives in AppKit — must be loaded before objc_getClass can find it.
         // Slaves don't open an event tap, so AppKit may not be loaded otherwise.
         NativeHelpers.EnsureAppKitLoaded();
     }
+
+    public IClipboard Clipboard => this;
+    public IPrimarySelection? PrimarySelection => null;
 
     // tests only: runs between the read's first change count and its last, so a test can copy in the middle of a read,
     // which no pasteboard of its own can time
@@ -114,7 +118,13 @@ public sealed class MacClipboardSync : IClipboardSync
         return bytes;
     }
 
-    // CopiedPrimary's readTextCopy, by pasteboard type
+    // by pasteboard type, in a pool of its own
+    public SelectionRead ReadTextCopy()
+    {
+        using var pool = new ObjcAutoreleasePool();
+        return ReadTextCopy(GetGeneralPasteboard());
+    }
+
     private static SelectionRead ReadTextCopy(nint pasteboard) =>
         !PasteboardTypes(pasteboard).Any(t => NotTextCopyTypes.Contains(t)) && ReadString(pasteboard, PasteboardTypeString) is { } text
             ? new SelectionRead.Text(text)
@@ -122,7 +132,14 @@ public sealed class MacClipboardSync : IClipboardSync
 
     private static long ChangeCount(nint pasteboard) => NativeMethods.objc_msgSend_long(pasteboard, NativeMethods.sel_registerName("changeCount"));
 
-    // the same counter CopiedPrimary versions by; null when there is no pasteboard
+    // the counter EmulatedPrimarySelection versions by, in a pool of its own
+    public long Version()
+    {
+        using var pool = new ObjcAutoreleasePool();
+        return ChangeCount(GetGeneralPasteboard());
+    }
+
+    // the same counter; null when there is no pasteboard
     public long? ChangeCount()
     {
         using var pool = new ObjcAutoreleasePool();
@@ -131,43 +148,44 @@ public sealed class MacClipboardSync : IClipboardSync
     }
 
     // the count Hydra's last write left, as the write saw it
-    public long? WroteAt() => _primary.WrittenAt();
+    public long? WroteAt() => _lastWrite.At;
 
-    public SelectionRead ReadPrimary()
+    // a write made without EmulatedPrimarySelection, which no selection sees; a failure is logged, not thrown
+    public ClipboardWrite Write(ClipboardContents contents)
     {
-        using var pool = new ObjcAutoreleasePool();
-        return _primary.Read();
+        try
+        {
+            return Write(contents, _ => { });
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to write clipboard");
+            return new ClipboardWrite.NotReplaced(ex.Message);
+        }
     }
 
-    public bool SetPrimaryText(string text)
+    public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
     {
         using var pool = new ObjcAutoreleasePool();
-        return _primary.Relay(text);
-    }
-
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
-    {
-        using var pool = new ObjcAutoreleasePool();
-        ClipboardSnapshot? written = null;
-        var replaced = _primary.Write(contents.PrimaryText, leftAt =>
+        contents = ClipboardUtils.Writing(contents);
+        return _lastWrite.Write(left =>
         {
             var pasteboard = GetGeneralPasteboard();
-            if (pasteboard == nint.Zero) return false;
+            if (pasteboard == nint.Zero) return null;
             // single clear, then write every representation atomically; the count the clear leaves is ours, so a copy
             // another app makes after it is still the user's
             var cleared = NativeMethods.objc_msgSend_long(pasteboard, NativeMethods.sel_registerName("clearContents"));
-            leftAt(cleared);
+            left(cleared);
             var marked = ClipboardUtils.WriteMarkers(_log, contents, () => WriteConcealedMarkers(pasteboard),
                 () => WriteData(pasteboard, [], PasteboardTypeTransient));
             _echo.Track(marked);
-            written = ClipboardUtils.WriteAll(_log, marked,
+            // the clear replaced it
+            return ClipboardUtils.WriteAll(_log, marked,
                 marked.Text is { } text ? new FormatWrite(ClipboardFormat.Text, () => WriteString(pasteboard, text, PasteboardTypeString)) : null,
                 marked.Html is { } html ? new FormatWrite(ClipboardFormat.Html, () => WriteString(pasteboard, html, PasteboardTypeHtml)) : null,
                 marked.Rtf is { } rtf ? new FormatWrite(ClipboardFormat.Rtf, () => WriteData(pasteboard, rtf, PasteboardTypeRtf)) : null,
-                marked.ImagePng is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null);
-            return true; // the clear replaced it
-        });
-        return replaced ? written : null;
+                marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null);
+        }, leftAt, ChangeCount);
     }
 
     // every marker, even after one is refused
@@ -180,7 +198,7 @@ public sealed class MacClipboardSync : IClipboardSync
     }
 
     // no files when the pasteboard cannot be read: Read says it is unreadable
-    public bool HasFileClipboard()
+    public bool HoldsFiles()
     {
         try
         {
@@ -209,7 +227,7 @@ public sealed class MacClipboardSync : IClipboardSync
     public bool CanUseEchoFallback()
     {
         using var pool = new ObjcAutoreleasePool();
-        return _primary.Owns();
+        return _lastWrite.Holds();
     }
 
     // setString:forType: and setData:forType: answer whether the pasteboard took it, as a BOOL: only its low byte is set

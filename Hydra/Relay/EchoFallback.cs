@@ -5,12 +5,12 @@ namespace Hydra.Relay;
 
 // a host's echo fallback: what it last took from a peer, read back where Read finds no format while the clipboard is
 // still Hydra's write
-public sealed class EchoFallback(IClipboardSync sync, ILogger log)
+public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
 {
     private ClipboardSnapshot? _last;
 
     // the clipboard, or null when it could not be read, which is unknown, never empty
-    public ClipboardSnapshot? Read(string context) => ClipboardUtils.ReadWithFallback(sync, Volatile.Read(ref _last), log, context);
+    public ClipboardSnapshot? Read(string context) => ClipboardUtils.ReadWithFallback(platform, Volatile.Read(ref _last), log, context);
 
     // what a peer's clipboard is compared against; null when the clipboard could not be read
     public ClipboardBaseline? Baseline(string context) => Read(context) is { } read ? ClipboardBaseline.Of(read) : null;
@@ -29,7 +29,7 @@ public sealed class EchoFallback(IClipboardSync sync, ILogger log)
     // the clear took, the fallback forgotten either way
     public bool Empty()
     {
-        var cleared = sync.ClearClipboard();
+        var cleared = platform.Clipboard.Write(ClipboardContents.Empty) is ClipboardWrite.Written;
         Volatile.Write(ref _last, null);
         return cleared;
     }
@@ -37,7 +37,7 @@ public sealed class EchoFallback(IClipboardSync sync, ILogger log)
     // copied files are kept, as is a clipboard keep says already matches; else empty empties it
     public BeginDecision EmptyUnlessFiles(string what, string host, Func<bool> empty, Func<bool>? keep = null)
     {
-        if (sync.HasFileClipboard())
+        if (platform.Clipboard.HoldsFiles())
         {
             if (log.IsEnabled(LogLevel.Debug))
                 log.LogDebug("Clipboard {What} from {Host}: the clipboard holds files, leaving it", what, host);
@@ -51,7 +51,7 @@ public sealed class EchoFallback(IClipboardSync sync, ILogger log)
     // it said was coming
     public BeginDecision Rejected(string host, Func<BeginDecision> begun)
     {
-        if (ClipboardChanges.Of(sync).StillOwnWrite() ?? sync.CanUseEchoFallback()) return begun();
+        if (ClipboardChanges.Of(platform.Clipboard).StillOwnWrite() ?? platform.Clipboard.CanUseEchoFallback()) return begun();
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard stream from {Host} rejected: the clipboard is not Hydra's write, keeping it", host);
         return BeginDecision.Keep;

@@ -5,10 +5,10 @@ namespace Hydra.Relay;
 
 // the slave's side of the clipboard handshake, and what it keeps between the master's messages; pendingFrom is the
 // content hash of the stream pending from a host, which counts as already applied
-public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string, ulong?> pendingFrom)
+public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Func<string, ulong?> pendingFrom)
 {
-    private readonly EchoFallback _echo = new(sync, log);
-    private readonly ClipboardChanges _changes = ClipboardChanges.Of(sync);
+    private readonly EchoFallback _echo = new(platform, log);
+    private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
     private readonly Dictionary<string, PerMaster> _masters = new(StringComparer.OrdinalIgnoreCase);
     // whether Hydra has written the clipboard here, so one still its own write holds nothing new
     private bool _wrote;
@@ -27,7 +27,7 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
     // whether the clipboard is Hydra's own write, which counts as seen so
     private bool Ours()
     {
-        if (!sync.CanUseEchoFallback()) return false;
+        if (!platform.Clipboard.CanUseEchoFallback()) return false;
         _oursAt = ++_clock;
         return true;
     }
@@ -60,7 +60,7 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
             // a copy the master never took is newer than the clipboard on its way, so it is kept for the resend
             if (!UntakenAnswer(hash, host)) EmptyForPending(host);
             master.SelectionPushFor = null;
-            ClipboardWire.NeedsPush(hash with { Hash = null, PrimaryHash = null }, sync, ClipboardBaseline.SelectionOf(sync), log, host);
+            ClipboardWire.NeedsPush(hash with { Hash = null, PrimaryHash = null }, platform, ClipboardBaseline.SelectionOf(platform), log, host);
             return PushNeed.None;
         }
         // the clipboard no longer ours since the visit began: the user copied here since, and that copy wins, once; the
@@ -73,7 +73,7 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
         // the master never took the full answer that synced this clipboard (or has yet to), so its hash is older: the
         // copy is kept for the next pull to resend, as the user's copy is
         if (UntakenAnswer(hash, host)) return KeepUsersCopy(hash, host);
-        var local = hash.Hash == null ? ClipboardBaseline.SelectionOf(sync) : _echo.Baseline("hash check");
+        var local = hash.Hash == null ? ClipboardBaseline.SelectionOf(platform) : _echo.Baseline("hash check");
         // a clipboard that could not be read asks for nothing this time, rather than have the master's replace it
         if (local == null)
         {
@@ -82,7 +82,7 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
         }
         var pending = hash.Hash != null && pendingFrom(host) == hash.Hash;
         if (pending) local = local with { Hash = hash.Hash };
-        var need = ClipboardWire.NeedsPush(hash, sync, local, log, host);
+        var need = ClipboardWire.NeedsPush(hash, platform, local, log, host);
         // against a pending stream the clipboard here is empty, so a push that follows is applied whole
         master.SelectionPushFor = need == PushNeed.Selection && !pending ? local : null;
         if (pending) RememberSelectionSince(hash, local, need, master);
@@ -123,8 +123,8 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
         master.SelectionPushFor = null;
         // host's clipboard replaces what this host last answered it with
         master.AnsweredConcealed = false;
-        var write = new ClipboardWrite();
-        var applied = _changes.Write(() => ClipboardWire.ApplyPush(sync, push, selectionFor, log, host, write), _ => write.Replaced);
+        var write = new AppliedWrite();
+        var applied = _changes.Write(() => ClipboardWire.ApplyPush(platform, push, selectionFor, log, host, write), _ => write.Replaced);
         if (write.MarkersRefused)
         {
             // the placeholder in place of a concealed copy whose markers were refused: an empty clipboard, Hydra's own
@@ -292,7 +292,7 @@ public sealed class ClipboardSlave(IClipboardSync sync, ILogger log, Func<string
             return PushNeed.None;
         }
         var local = read with { Hash = hash.Hash };
-        var need = ClipboardWire.NeedsPush(hash with { Hash = null, PrimaryIsText = null }, sync, local, log, host);
+        var need = ClipboardWire.NeedsPush(hash with { Hash = null, PrimaryIsText = null }, platform, local, log, host);
         master.SelectionPushFor = need == PushNeed.Selection ? local : null;
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard hash from {Host}: copied here since the entry, keeping that copy ({Need})", host, need);

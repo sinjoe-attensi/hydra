@@ -366,7 +366,7 @@ public class SharingOffTests : MasterClipboardFixture
 
     private static readonly IHydraProfile SharingOff = TransitionTestHelper.ProfileWith(clipboardSync: ClipboardSyncMode.Off);
 
-    private TestableSlaveRelay OffSlave(IClipboardSync clipboard, IOsdNotification? osd = null) =>
+    private TestableSlaveRelay OffSlave(IClipboardPlatform clipboard, IOsdNotification? osd = null) =>
         _slaves.Add(new TestableSlaveRelay(clipboard: clipboard, osd: osd ?? new RecordingOsd(), clock: new FakeTimeProvider(),
             clipboardSync: ClipboardSyncMode.Off));
 

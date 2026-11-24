@@ -2,8 +2,12 @@ using Hydra.Platform;
 
 namespace Tests.Setup;
 
-public sealed class FakeClipboardSync : IClipboardSync
+// a platform's clipboard and its primary selection in one
+public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimarySelection
 {
+    public IClipboard Clipboard => this;
+    public IPrimarySelection? PrimarySelection => this;
+
     public string? Text { get; private set; }
     public string? PrimaryText { get; private set; }
     public byte[]? ImagePng { get; private set; }
@@ -56,7 +60,7 @@ public sealed class FakeClipboardSync : IClipboardSync
 
     public ClipboardRead Read()
     {
-        if (HasFileClipboard()) return new ClipboardRead.Files();
+        if (HoldsFiles()) return new ClipboardRead.Files();
         Interlocked.Increment(ref _reads);
         var text = Text;
         if (ReadGate.IsHeld) ReadsParked.Push("parked");
@@ -73,6 +77,10 @@ public sealed class FakeClipboardSync : IClipboardSync
         return PrimaryText is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
     }
 
+    SelectionRead IPrimarySelection.Read() => ReadPrimary();
+
+    public SelectionWrite Write(string text) => SetPrimaryText(text) ? new SelectionWrite.Kept() : new SelectionWrite.NotKept("the fake keeps no selection");
+
     public bool SetPrimaryText(string text)
     {
         if (!KeepsSelectionValue) return false;
@@ -80,7 +88,7 @@ public sealed class FakeClipboardSync : IClipboardSync
         return true;
     }
 
-    public bool HasFileClipboard() => HasFileClipboardValue;
+    public bool HoldsFiles() => HasFileClipboardValue;
 
     public bool CanUseEchoFallback() => CanUseEchoFallbackValue;
 
@@ -101,11 +109,13 @@ public sealed class FakeClipboardSync : IClipboardSync
     // runs as a write ends, failed or not, as a copy landing during it
     public Action? AfterWrite { get; set; }
 
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
+    // a write of contents counts in SetClipboardCallCount, a clear (Empty) in ClearClipboardCallCount
+    public ClipboardWrite Write(ClipboardContents contents)
     {
+        if (contents.IsEmpty) return Clear();
         try
         {
-            return Write(contents);
+            return WriteContents(contents);
         }
         finally
         {
@@ -113,39 +123,41 @@ public sealed class FakeClipboardSync : IClipboardSync
         }
     }
 
-    private ClipboardSnapshot? Write(ClipboardSnapshot contents)
+    private ClipboardWrite WriteContents(ClipboardContents contents)
     {
         SetClipboardCallCount++;
-        // mirror real implementations: the selection beside it, and every format replaced, a refused one left empty
-        if (contents.PrimaryText != null) SetPrimaryText(contents.PrimaryText);
-        if (WriteFailsValue) return null;
+        // mirror real implementations: every format replaced, a refused one left empty
+        if (WriteFailsValue) return new ClipboardWrite.NotReplaced("the fake's write fails");
         _wroteAt = ++_changes;
-        // as the platforms do when the markers are refused: the placeholder in place of the copy
-        if (contents.Concealed && RefusesMarkersValue)
+        // as the platforms do when the markers are refused: the placeholder in place of the copy, taken as empty
+        if (contents.Secret && RefusesMarkersValue)
         {
             Text = null;
             ImagePng = null;
             Html = null;
             Rtf = null;
             ConcealedValue = false;
-            return ClipboardSnapshot.Placeholder with { PrimaryText = contents.PrimaryText };
+            return Written(ClipboardContents.Empty);
         }
         var written = contents with
         {
             Text = Kept(ClipboardFormat.Text, contents.Text),
-            ImagePng = Kept(ClipboardFormat.Image, contents.ImagePng),
+            Png = Kept(ClipboardFormat.Image, contents.Png),
             Html = Kept(ClipboardFormat.Html, contents.Html),
             Rtf = Kept(ClipboardFormat.Rtf, contents.Rtf),
         };
         Text = written.Text;
-        ImagePng = written.ImagePng;
+        ImagePng = written.Png;
         Html = written.Html;
         Rtf = written.Rtf;
         // the platforms write the markers beside a concealed copy
-        ConcealedValue = written.Concealed;
+        ConcealedValue = written.Secret;
         _ownWrite = true;
-        return written;
+        return Written(written);
     }
+
+    private ClipboardWrite.Written Written(ClipboardContents taken) =>
+        new(taken, ChangeCountSupported && _wroteAt is { } at ? new ClipboardVersion(at) : null);
 
     private T? Kept<T>(ClipboardFormat format, T? value) where T : class => RefusedFormats.Contains(format) ? null : value;
 
@@ -153,17 +165,17 @@ public sealed class FakeClipboardSync : IClipboardSync
     public void RefuseEveryFormat() => RefusedFormats.UnionWith(Enum.GetValues<ClipboardFormat>());
 
     // the selection is left as it is; Hydra reads the clear's placeholder as empty, so the fake keeps nothing
-    public bool ClearClipboard()
+    private ClipboardWrite Clear()
     {
         ClearClipboardCallCount++;
-        if (ClearFailsValue) return false;
+        if (ClearFailsValue) return new ClipboardWrite.NotReplaced("the fake's clear fails");
         _wroteAt = ++_changes;
         Text = null;
         ImagePng = null;
         Html = null;
         Rtf = null;
         ConcealedValue = false;
-        return true;
+        return Written(ClipboardContents.Empty);
     }
 
     // helpers for test setup (bypass the call counters)

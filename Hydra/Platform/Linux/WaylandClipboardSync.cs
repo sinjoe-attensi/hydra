@@ -12,7 +12,7 @@ namespace Hydra.Platform.Linux;
 // wl-copy offers one MIME type per process, so a write keeps the text when there is any, else the image; the formats
 // left out are reported as refused. No change counter: wl-paste --watch could follow the owners, but hashes decide
 // where a platform keeps none.
-internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
+internal sealed class WaylandClipboardSync : IClipboardPlatform, IClipboard, IDisposable
 {
     private const int ReadTimeoutMs = 2000;
     // how long a write waits for wl-copy to take the clipboard before answering
@@ -24,7 +24,17 @@ internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
     private Process? _primaryOwner;
 
     // under another's logger, as PortalClipboardSync's fallback
-    internal WaylandClipboardSync(ILogger log) => _log = log;
+    internal WaylandClipboardSync(ILogger log)
+    {
+        _log = log;
+        PrimarySelection = new DelegatedSelection(ReadPrimary, SetPrimaryText);
+    }
+
+    public IClipboard Clipboard => this;
+
+    // the primary selection
+    public IPrimarySelection PrimarySelection { get; }
+    IPrimarySelection? IClipboardPlatform.PrimarySelection => PrimarySelection;
 
     internal static bool Available => OnPath("wl-copy") && OnPath("wl-paste") && Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") != null;
 
@@ -52,7 +62,7 @@ internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
     }
 
     // never echo-suppressed: the selection travels as it stands, even when Hydra set it
-    public SelectionRead ReadPrimary()
+    private SelectionRead ReadPrimary()
     {
         try
         {
@@ -64,40 +74,41 @@ internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
         }
     }
 
-    public bool SetPrimaryText(string text)
+    private SelectionWrite SetPrimaryText(string text)
     {
         // taking the selection back with the text it already holds would clear its owner's highlight; one that could not
         // be read is taken as not holding it
-        if (ReadPrimary() is SelectionRead.Text { Value: var held } && held == text) return true;
+        if (ReadPrimary() is SelectionRead.Text { Value: var held } && held == text) return new SelectionWrite.Kept();
         // a failed copy leaves the old owner serving, so the selection is not lost with it
-        if (Copy(["-p"], Encoding.UTF8.GetBytes(text)) is not { } process) return false;
+        if (Copy(["-p"], Encoding.UTF8.GetBytes(text)) is not { } process) return new SelectionWrite.NotKept("wl-copy could not take the primary selection");
         lock (_lock)
         {
             Stop(_primaryOwner);
             _primaryOwner = process;
         }
-        return true;
+        return new SelectionWrite.Kept();
     }
 
     public bool CanUseEchoFallback() => OwnsClipboard();
 
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
+    public ClipboardWrite Write(ClipboardContents contents)
     {
+        contents = ClipboardUtils.Writing(contents);
         // the placeholder carries the hint too, so clipboard managers never keep it
-        var sensitive = contents.Concealed || contents.IsClear;
+        var sensitive = contents.Secret || ClipboardUtils.IsPlaceholder(contents);
         List<string> args = sensitive ? ["--sensitive"] : [];
 
-        ClipboardSnapshot written;
+        ClipboardContents written;
         byte[] data;
         if (!string.IsNullOrEmpty(contents.Text))
         {
             data = Encoding.UTF8.GetBytes(contents.Text);
             args.AddRange(["-t", WaylandMime.OfferedText[0]]);
-            written = contents with { ImagePng = null, Html = null, Rtf = null };
+            written = contents with { Png = null, Html = null, Rtf = null };
         }
-        else if (contents.ImagePng != null)
+        else if (contents.Png != null)
         {
-            data = contents.ImagePng;
+            data = contents.Png;
             args.AddRange(["-t", WaylandMime.Png]);
             written = contents with { Html = null, Rtf = null };
         }
@@ -115,21 +126,18 @@ internal sealed class WaylandClipboardSync : IClipboardSync, IDisposable
         }
         else
         {
-            // nothing for the clipboard: leave it as it is, and carry only the selection
-            if (contents.PrimaryText is { } selection) SetPrimaryText(selection);
-            return contents;
+            // nothing for the clipboard, which Writing never leaves: leave it as it is
+            return ClipboardUtils.Written(contents, null);
         }
 
         // a failed copy leaves the old owner serving: the clipboard was not replaced, so it must not be emptied either
-        if (Copy(args, data) is not { } process) return null;
+        if (Copy(args, data) is not { } process) return new ClipboardWrite.NotReplaced("wl-copy could not take the clipboard");
         lock (_lock)
         {
             Stop(_clipboardOwner);
             _clipboardOwner = process;
         }
-
-        if (contents.PrimaryText is { } primaryText) SetPrimaryText(primaryText);
-        return written;
+        return ClipboardUtils.Written(written, null);
     }
 
     private bool OwnsClipboard()

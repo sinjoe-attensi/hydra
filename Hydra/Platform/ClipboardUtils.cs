@@ -14,16 +14,16 @@ public static class ClipboardUtils
     // still mean its own write was echo-suppressed; a fresh copy of any one type keeps stale fields from coming back. The
     // selection is read as it stands, never from the fallback. Null when the clipboard could not be read, which is
     // unknown, never empty
-    public static ClipboardSnapshot? ReadWithFallback(IClipboardSync sync, ClipboardSnapshot? fallback, ILogger log, string context)
+    public static ClipboardSnapshot? ReadWithFallback(IClipboardPlatform platform, ClipboardSnapshot? fallback, ILogger log, string context)
     {
-        switch (sync.Read())
+        switch (platform.Clipboard.Read())
         {
             case ClipboardRead.Contents { Value: var contents }:
-                return Read(sync, contents, fallback, log, context);
+                return Read(platform, contents, fallback, log, context);
             case ClipboardRead.Files:
                 if (log.IsEnabled(LogLevel.Debug))
                     log.LogDebug("Clipboard {Context} contains files; preserving the native file clipboard", context);
-                return TrimToFit(null, SelectionText(sync), null, null, null, log, context);
+                return TrimToFit(null, SelectionText(platform), null, null, null, log, context);
             case ClipboardRead.Unreadable unreadable:
                 log.LogWarning(unreadable.Cause, "Clipboard {Context}: the clipboard could not be read ({Reason}), so nothing is known of it this time",
                     context, unreadable.Reason);
@@ -33,13 +33,19 @@ public static class ClipboardUtils
         }
     }
 
-    // the selection as it stands; one that could not be read is none
-    private static string? SelectionText(IClipboardSync sync) => sync.ReadPrimary() is SelectionRead.Text { Value: var text } ? text : null;
+    // the selection as it stands, none where the platform keeps none
+    public static SelectionRead ReadSelection(this IClipboardPlatform platform) => platform.PrimarySelection?.Read() ?? new SelectionRead.None();
 
-    private static ClipboardSnapshot Read(IClipboardSync sync, ClipboardContents read, ClipboardSnapshot? fallback, ILogger log, string context)
+    // whether the platform kept the selection; never where it keeps none
+    public static bool KeepSelection(this IClipboardPlatform platform, string text) => platform.PrimarySelection?.Write(text) is SelectionWrite.Kept;
+
+    // the selection as it stands; one that could not be read is none
+    private static string? SelectionText(IClipboardPlatform platform) => platform.ReadSelection() is SelectionRead.Text { Value: var text } ? text : null;
+
+    private static ClipboardSnapshot Read(IClipboardPlatform platform, ClipboardContents read, ClipboardSnapshot? fallback, ILogger log, string context)
     {
         var text = read.Text;
-        var primaryText = SelectionText(sync);
+        var primaryText = SelectionText(platform);
         var image = read.Png;
         var html = read.Html;
         var rtf = read.Rtf;
@@ -50,7 +56,7 @@ public static class ClipboardUtils
             text = null;
             concealed = false;
         }
-        if (text == null && image == null && html == null && rtf == null && sync.CanUseEchoFallback())
+        if (text == null && image == null && html == null && rtf == null && platform.Clipboard.CanUseEchoFallback())
         {
             text = fallback?.Text;
             image = fallback?.ImagePng;
@@ -69,25 +75,38 @@ public static class ClipboardUtils
     // a hash every host computes alike, for what crosses the wire
     public static ulong StableHash(string text) => XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(text));
 
-    // a write's contents once its markers are written, before any format, see IClipboardSync.SetClipboard: a concealed
-    // copy's markers, the placeholder going in its place when they are refused, and the placeholder's no-history ones
-    public static ClipboardSnapshot WriteMarkers(ILogger log, ClipboardSnapshot contents, Func<bool> writeConcealedMarkers,
+    // what a clear writes, never crossing the contract: a write of Empty writes it, and the write takes it as Empty
+    private static readonly ClipboardContents Placeholder = new(ClipboardSnapshot.PlaceholderText, null, null, null, false);
+
+    // what a write of contents writes: the placeholder for a clear
+    public static ClipboardContents Writing(ClipboardContents contents) => contents.IsEmpty ? Placeholder : contents;
+
+    // the placeholder alone, which is never content
+    public static bool IsPlaceholder(ClipboardContents contents) => ClipboardSnapshot.IsPlaceholder(contents.Text, contents.Png, contents.Html, contents.Rtf);
+
+    // a write that replaced the clipboard: what it wrote, the placeholder taken as Empty, at the count it left
+    public static ClipboardWrite.Written Written(ClipboardContents written, long? at) =>
+        new(IsPlaceholder(written) ? ClipboardContents.Empty : written, at is { } count ? new ClipboardVersion(count) : null);
+
+    // a write's contents once its markers are written, before any format, see IClipboard.Write: a concealed copy's
+    // markers, the placeholder going in its place when they are refused, and the placeholder's no-history ones
+    public static ClipboardContents WriteMarkers(ILogger log, ClipboardContents contents, Func<bool> writeConcealedMarkers,
         Func<bool> writePlaceholderMarkers)
     {
         var marked = contents;
-        if (contents.Concealed && !writeConcealedMarkers())
+        if (contents.Secret && !writeConcealedMarkers())
         {
             log.LogWarning("The clipboard refused the concealed markers; the placeholder was written in place of the copy");
-            marked = ClipboardSnapshot.Placeholder with { PrimaryText = contents.PrimaryText };
+            marked = Placeholder;
         }
-        if (marked.IsClear && !writePlaceholderMarkers())
+        if (IsPlaceholder(marked) && !writePlaceholderMarkers())
             log.LogWarning("The clipboard refused the no-history markers on its placeholder");
         return marked;
     }
 
     // every format of a write of contents, in the platform's order, each null when absent; one the clipboard refuses is
     // warned about, and the rest are still written. What was written: contents less the refused formats
-    public static ClipboardSnapshot WriteAll(ILogger log, ClipboardSnapshot contents, params FormatWrite?[] writes)
+    public static ClipboardContents WriteAll(ILogger log, ClipboardContents contents, params FormatWrite?[] writes)
     {
         var refused = writes.Where(w => w != null && !w.Write()).Select(w => w!.Format).ToList();
         if (refused.Count == 0) return contents;
@@ -95,38 +114,47 @@ public static class ClipboardUtils
         return refused.Aggregate(contents, Without);
     }
 
-    private static ClipboardSnapshot Without(ClipboardSnapshot s, ClipboardFormat format) => format switch
+    private static ClipboardContents Without(ClipboardContents c, ClipboardFormat format) => format switch
     {
-        ClipboardFormat.Text => s with { Text = null },
-        ClipboardFormat.Html => s with { Html = null },
-        ClipboardFormat.Rtf => s with { Rtf = null },
-        _ => s with { ImagePng = null },
+        ClipboardFormat.Text => c with { Text = null },
+        ClipboardFormat.Html => c with { Html = null },
+        ClipboardFormat.Rtf => c with { Rtf = null },
+        _ => c with { Png = null },
     };
 
     // applies what it may and returns that, null for nothing: a selection alone, or beside the user's copied files,
     // leaves the clipboard as it is, and a format the clipboard refused is not in it; written is told what the
-    // clipboard's write returned, whenever there was one
-    public static ClipboardSnapshot? ApplyPreservingFiles(IClipboardSync sync, ClipboardSnapshot contents, ILogger log, string context,
+    // clipboard's write took, the selection beside it, whenever there was one, null when it did not replace the
+    // clipboard. The selection is set before the clipboard is written, as the emulated one always took it
+    public static ClipboardSnapshot? ApplyPreservingFiles(IClipboardPlatform platform, ClipboardSnapshot contents, ILogger log, string context,
         Action<ClipboardSnapshot?>? written = null)
     {
         if (contents.IsEmpty) return null;
-        if (contents.IsSelectionOnly) return KeepSelection(sync, contents.PrimaryText);
-        if (sync.HasFileClipboard())
+        if (contents.IsSelectionOnly) return KeptSelection(platform, contents.PrimaryText);
+        if (platform.Clipboard.HoldsFiles())
         {
             if (log.IsEnabled(LogLevel.Information))
                 log.LogInformation("Clipboard {Context} skipped because the local clipboard contains files", context);
-            return KeepSelection(sync, contents.PrimaryText);
+            return KeptSelection(platform, contents.PrimaryText);
         }
 
-        // set again after a failed write, or one that took no format, since only SetPrimaryText says whether this host
-        // could keep it; the placeholder written in place of a copy whose markers were refused is no copy applied
-        var wrote = sync.SetClipboard(contents);
+        if (contents.PrimaryText is { } selection) platform.KeepSelection(selection);
+        var wrote = platform.Clipboard.Write(contents.Clipboard) is ClipboardWrite.Written { Taken: var taken } ? Wrote(contents, taken) : null;
         written?.Invoke(wrote);
-        return wrote is { HasClipboard: true } && (!wrote.IsClear || contents.IsClear) ? wrote : KeepSelection(sync, contents.PrimaryText);
+        // set again after a failed write, or one that took no format, since only the selection's write says whether this
+        // host could keep it; the placeholder written in place of a copy whose markers were refused is no copy applied
+        return wrote is { HasClipboard: true } && (!wrote.IsClear || contents.IsClear) ? wrote : KeptSelection(platform, contents.PrimaryText);
     }
 
-    private static ClipboardSnapshot? KeepSelection(IClipboardSync sync, string? selection) =>
-        selection != null && sync.SetPrimaryText(selection) ? ClipboardSnapshot.SelectionOnly(selection) : null;
+    // what a write of asked took, as a snapshot with the selection asked beside it: the placeholder for a clear, and for
+    // a concealed copy whose markers were refused (taken without its secret)
+    internal static ClipboardSnapshot Wrote(ClipboardSnapshot asked, ClipboardContents taken) =>
+        asked.IsClear || (asked.Concealed && !taken.Secret)
+            ? ClipboardSnapshot.Placeholder with { PrimaryText = asked.PrimaryText }
+            : ClipboardSnapshot.Of(taken, asked.PrimaryText);
+
+    private static ClipboardSnapshot? KeptSelection(IClipboardPlatform platform, string? selection) =>
+        selection != null && platform.KeepSelection(selection) ? ClipboardSnapshot.SelectionOnly(selection) : null;
 
     // drop fields until the combined size fits. the selection goes first if that alone makes it fit, as the one thing
     // the user did not copy; then image, the rich reps (html, rtf), the selection, and LAST the universal plain text

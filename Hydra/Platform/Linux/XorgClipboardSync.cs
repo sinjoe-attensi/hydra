@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Hydra.Platform.Linux;
 
-public sealed class XorgClipboardSync : IClipboardSync, IDisposable
+public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposable
 {
     // the most one INCR chunk carries
     private const int IncrChunkBytes = 256 * 1024;
@@ -41,7 +41,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     // checked and moved under it too, so a clear for an earlier loss never nulls new data and a selection another app
     // has just taken is never answered with ours
     private readonly Lock _dataLock = new();
-    private ClipboardSnapshot? _ownedClipboard;
+    private ClipboardContents? _ownedClipboard;
     private string? _ownedPrimaryText;
     // CLIPBOARD's change counter: moved by each of Hydra's own writes and each other client's taking of it, an owner
     // taking it again (an identical re-copy) among them, which XFixes reports. Set once XFixes is known
@@ -130,7 +130,14 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
         _running = true;
         _eventThread = new Thread(EventLoop) { IsBackground = true, Name = "HydraClipboardEventLoop" };
         _eventThread.Start();
+        PrimarySelection = new DelegatedSelection(ReadPrimary, SetPrimaryText);
     }
+
+    public IClipboard Clipboard => this;
+
+    // PRIMARY
+    public IPrimarySelection PrimarySelection { get; }
+    IPrimarySelection? IClipboardPlatform.PrimarySelection => PrimarySelection;
 
     internal bool OwnsPrimary => NativeMethods.XGetSelectionOwner(_display, NativeMethods.XA_PRIMARY) == _window;
 
@@ -144,7 +151,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     }
 
     // never echo-suppressed: the selection travels as it stands, even when Hydra set it
-    public SelectionRead ReadPrimary()
+    private SelectionRead ReadPrimary()
     {
         lock (_dataLock)
         {
@@ -269,22 +276,21 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
     // under _dataLock: CLIPBOARD's owner as it stands, counted once when it changed, however it was seen
     private void NoteOwner() => _counter.Seen(NativeMethods.XGetSelectionOwner(_display, _atomClipboard));
 
-    public bool SetPrimaryText(string text)
+    private SelectionWrite SetPrimaryText(string text)
     {
         // taking PRIMARY back with the text it already holds would clear its owner's highlight
         // one that could not be read is taken as not holding it
         if (ReadPrimary() is not SelectionRead.Text { Value: var held } || held != text) Own(NativeMethods.XA_PRIMARY, () => _ownedPrimaryText = text);
-        return true;
+        return new SelectionWrite.Kept();
     }
 
     // the owner serves every format it holds, so none is refused
-    public ClipboardSnapshot SetClipboard(ClipboardSnapshot contents)
+    public ClipboardWrite Write(ClipboardContents contents)
     {
-        // the snapshot is the authoritative new clipboard — replace all owned representations
-        Own(_atomClipboard, () => _ownedClipboard = contents);
-
-        if (contents.PrimaryText is { } primaryText) SetPrimaryText(primaryText);
-        return contents;
+        // the contents are the authoritative new clipboard — replace all owned representations
+        var writing = ClipboardUtils.Writing(contents);
+        Own(_atomClipboard, () => _ownedClipboard = writing);
+        return ClipboardUtils.Written(writing, WroteAt());
     }
 
     private void Own(nint selection, Action setData)
@@ -418,7 +424,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
 
     private nint WriteTargetToProperty(nint selection, nint requestor, nint target, nint property)
     {
-        ClipboardSnapshot? clipboard;
+        ClipboardContents? clipboard;
         string? text;
         lock (_dataLock)
         {
@@ -427,14 +433,14 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
         }
 
         // the placeholder carries the hint too, so clipboard managers never keep it
-        var hinted = clipboard is { Concealed: true } or { IsClear: true };
+        var hinted = clipboard is { Secret: true } || (clipboard != null && ClipboardUtils.IsPlaceholder(clipboard));
 
         if (target == _atomTargets)
         {
             // TARGETS always, and only what there is to serve beside it
             var atoms = new List<nint> { _atomTargets };
             if (text != null) atoms.AddRange([_atomUtf8String, NativeMethods.XA_STRING]);
-            if (clipboard?.ImagePng != null) atoms.Add(_atomImagePng);
+            if (clipboard?.Png != null) atoms.Add(_atomImagePng);
             if (clipboard?.Html != null) atoms.Add(_atomTextHtml);
             if (hinted) atoms.Add(_atomPasswordHint);
 
@@ -447,7 +453,7 @@ public sealed class XorgClipboardSync : IClipboardSync, IDisposable
             return hinted ? ServeBytes(requestor, property, _atomPasswordHint, PasswordHintSecret) : nint.Zero;
 
         if (target == _atomImagePng)
-            return clipboard?.ImagePng is { } image ? ServeBytes(requestor, property, _atomImagePng, image) : nint.Zero;
+            return clipboard?.Png is { } image ? ServeBytes(requestor, property, _atomImagePng, image) : nint.Zero;
 
         if (target == _atomTextHtml)
             return clipboard?.Html is { } html ? ServeBytes(requestor, property, _atomTextHtml, Encoding.UTF8.GetBytes(html)) : nint.Zero;

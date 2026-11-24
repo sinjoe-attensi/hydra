@@ -35,7 +35,7 @@ public sealed class TestableSlaveRelay : SlaveRelayConnection
 
     public TestableSlaveRelay(
         IWorldState? worldState = null,
-        IClipboardSync? clipboard = null,
+        IClipboardPlatform? clipboard = null,
         ICursorHider? cursorHider = null,
         IScreenSaverSync? screenSaverSync = null,
         Func<long>? trackerClock = null,
@@ -59,7 +59,7 @@ public sealed class TestableSlaveRelay : SlaveRelayConnection
     // ActivityTracker and SlaveRelayConnection must share the same WorldState — chaining lets us build it once
     private TestableSlaveRelay(
         SharedDeps deps,
-        IClipboardSync? clipboard,
+        IClipboardPlatform? clipboard,
         ICursorHider? cursorHider,
         IScreenSaverSync? screenSaverSync,
         IDormancyState dormancy,

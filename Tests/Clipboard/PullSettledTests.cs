@@ -11,12 +11,14 @@ namespace Tests.Clipboard;
 [TestFixture]
 public class PullSettledTests
 {
-    private sealed class Watching : IClipboardSync, IPullObserver
+    private sealed class Watching : IClipboardPlatform, IClipboard, IPullObserver
     {
+        public IClipboard Clipboard => this;
+        public IPrimarySelection? PrimarySelection => null;
         public FakeClipboardSync Inner { get; } = new();
         public List<Task> Sent { get; } = [];
         public ClipboardRead Read() => Inner.Read();
-        public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents) => Inner.SetClipboard(contents);
+        public ClipboardWrite Write(ClipboardContents contents) => Inner.Write(contents);
         public long? ChangeCount() => Inner.ChangeCount();
         public long? WroteAt() => Inner.WroteAt();
         public void PullSent(Task settled) => Sent.Add(settled);

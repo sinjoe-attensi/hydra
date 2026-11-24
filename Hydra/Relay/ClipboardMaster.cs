@@ -6,12 +6,12 @@ namespace Hydra.Relay;
 
 // the master's side of the clipboard handshake, and what it keeps between the slaves' messages: the latest pull to each
 // host, and the pull whose answer is streaming in
-public sealed class ClipboardMaster(IClipboardSync sync, ILogger log)
+public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
 {
     private static readonly ulong EmptyHash = ClipboardUtils.ClipboardHash(ClipboardSnapshot.Empty);
 
-    private readonly EchoFallback _echo = new(sync, log);
-    private readonly ClipboardChanges _changes = ClipboardChanges.Of(sync);
+    private readonly EchoFallback _echo = new(platform, log);
+    private readonly ClipboardChanges _changes = ClipboardChanges.Of(platform.Clipboard);
     private readonly Lock _lock = new();
     // one clipboard write at a time, its copied-since check with it: the relay delivers answers one at a time, but a held
     // answer's deadline lands it from a timer or a hash read. Never taken on the input actor, which writes nothing, and
@@ -33,7 +33,7 @@ public sealed class ClipboardMaster(IClipboardSync sync, ILogger log)
     // bumped by every apply or clear, so a read begun before one never writes its older state over it
     private int _version;
     // told of each pull sent and when it settles; null for a clipboard that serves no paste on request, which tracks none
-    private readonly IPullObserver? _observer = sync as IPullObserver;
+    private readonly IPullObserver? _observer = platform as IPullObserver;
     // writes under way (TakePullAnswer, LandHeld, ForgetPull): a pull they took is settled only once they are done; under _lock
     private int _writing;
     // the pulls sent whose Settled has not completed, under _lock
@@ -523,8 +523,8 @@ public sealed class ClipboardMaster(IClipboardSync sync, ILogger log)
     private PullAnswer Apply(string host, PendingPull pull, ClipboardPullResponseMessage answer, List<OutstandingPull> gone)
     {
         var cleared = answer.Cleared == true && ClearConcealed(host);
-        var write = new ClipboardWrite();
-        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(sync, answer, pull.Against, log, host, write), _ => write.Replaced);
+        var write = new AppliedWrite();
+        var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host, write), _ => write.Replaced);
         // the placeholder in place of a concealed copy whose markers were refused is an empty clipboard, Hydra's own
         var refused = write.MarkersRefused;
         if (refused) _echo.Forget();

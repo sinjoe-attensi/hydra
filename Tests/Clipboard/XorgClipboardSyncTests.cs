@@ -525,7 +525,7 @@ public class XorgClipboardSyncTests
         using var owner = new XorgClipboardSync();
         owner.SetClipboard(new ClipboardSnapshot("copied", "selected", null));
 
-        ((IClipboardSync)owner).ClearClipboard();
+        ((IClipboardPlatform)owner).ClearClipboard();
 
         var targets = Targets();
         using (Assert.EnterMultipleScope())
@@ -544,7 +544,7 @@ public class XorgClipboardSyncTests
     {
         using var owner = new XorgClipboardSync();
         using var reader = new XorgClipboardSync();
-        ((IClipboardSync)owner).ClearClipboard();
+        ((IClipboardPlatform)owner).ClearClipboard();
         XclipRead("UTF8_STRING"); // barrier, as in RoundTrip_HtmlAndText_BetweenInstances
 
         using (Assert.EnterMultipleScope())

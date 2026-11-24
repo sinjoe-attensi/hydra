@@ -477,11 +477,11 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
         return sender;
     }
 
-    private TestableSlaveRelay Slave(IClipboardSync clipboard) => _slaves.New(clipboard, _osd, _clock);
+    private TestableSlaveRelay Slave(IClipboardPlatform clipboard) => _slaves.New(clipboard, _osd, _clock);
 
     // the master's clipboard, entering "remote" and pushed to a slave on the far side; the hash the entry offered, and the
     // stream's Begin
-    private async Task<PushedStream> PushedToASlave(FakeClipboardSync master, IClipboardSync slaveClipboard)
+    private async Task<PushedStream> PushedToASlave(FakeClipboardSync master, IClipboardPlatform slaveClipboard)
     {
         var (platform, relay, _) = await StartMaster(master);
         TransitionTestHelper.EnterRemote(platform);
@@ -507,7 +507,7 @@ public class ClipboardEdgeContentTests : MasterClipboardFixture
     }
 
     // the slave's clipboard, answering the master's pull as the cursor leaves "remote", streamed into the master
-    private async Task ReturnedToTheMaster(FakeClipboardSync master, IClipboardSync slaveClipboard)
+    private async Task ReturnedToTheMaster(FakeClipboardSync master, IClipboardPlatform slaveClipboard)
     {
         var (platform, relay, _) = await StartMaster(master);
         VisitAndLeaveRemote(platform);

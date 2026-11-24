@@ -10,18 +10,18 @@ public class MemoryClipboardSyncTests
     [Test]
     public void Clear_ReadsAsEmpty_KeepsTheSelection_AndMovesTheCounter()
     {
-        IClipboardSync clipboard = new MemoryClipboardSync();
-        var copy = new ClipboardSnapshot("copied", "selected", null);
-        clipboard.SetClipboard(copy);
-        var afterCopy = clipboard.ChangeCount();
-        var cleared = clipboard.ClearClipboard();
+        IClipboardPlatform clipboard = new MemoryClipboardSync();
+        clipboard.KeepSelection("selected");
+        clipboard.Clipboard.Write(new ClipboardContents("copied", null, null, null, false));
+        var afterCopy = clipboard.Clipboard.ChangeCount();
+        var cleared = clipboard.Clipboard.Write(ClipboardContents.Empty);
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(cleared, Is.True);
+            Assert.That(cleared, Is.InstanceOf<ClipboardWrite.Written>());
             Assert.That(ClipboardUtils.ReadWithFallback(clipboard, null, NullLogger.Instance, "test")?.HasClipboard, Is.False);
-            Assert.That(clipboard.ReadPrimary().TextOrNone(), Is.EqualTo("selected"));
-            Assert.That(clipboard.ChangeCount(), Is.EqualTo(afterCopy + 1));
+            Assert.That(clipboard.ReadSelection().TextOrNone(), Is.EqualTo("selected"));
+            Assert.That(clipboard.Clipboard.ChangeCount(), Is.EqualTo(afterCopy + 1));
         }
     }
 }

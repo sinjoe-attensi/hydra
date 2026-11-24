@@ -12,8 +12,8 @@ public sealed record ClipboardBaseline(ulong? Hash, string? Text, string? Primar
 
     // the selection alone, against a peer that offers no clipboard, so this host's need not be read; one that could not be
     // read is none
-    public static ClipboardBaseline SelectionOf(IClipboardSync sync) =>
-        new(null, null, sync.ReadPrimary() is SelectionRead.Text { Value: var selection } ? selection : null);
+    public static ClipboardBaseline SelectionOf(IClipboardPlatform platform) =>
+        new(null, null, platform.ReadSelection() is SelectionRead.Text { Value: var selection } ? selection : null);
 }
 
 // what a slave's hash check found it needs from the master: nothing, the selection alone, or the clipboard
@@ -21,7 +21,7 @@ public enum PushNeed { None, Selection, Clipboard }
 
 // what the clipboard's write of a peer's copy did, once one was made: Wrote is what it returned, null when it did not
 // replace the clipboard
-public sealed class ClipboardWrite
+public sealed class AppliedWrite
 {
     public bool Tried { get; private set; }
     public ClipboardSnapshot? Wrote { get; private set; }
@@ -83,25 +83,25 @@ public static class ClipboardWire
 
     // a master's hash against this host's clipboard: takes the selection beside a clipboard it already has, and says what
     // it still needs pushed
-    internal static PushNeed NeedsPush(ClipboardHashMessage m, IClipboardSync sync, ClipboardBaseline local, ILogger log, string host)
+    internal static PushNeed NeedsPush(ClipboardHashMessage m, IClipboardPlatform platform, ClipboardBaseline local, ILogger log, string host)
     {
         if (m.Hash is { } hash && hash != local.Hash) return PushNeed.Clipboard;
         if (m.PrimaryHash is { } selectionHash) return selectionHash != SelectionHash(local.PrimaryText) ? PushNeed.Selection : PushNeed.None;
-        TakeSelectionBeside(sync, m, local, log, $"selection from {host}");
+        TakeSelectionBeside(platform, m, local, log, $"selection from {host}");
         return PushNeed.None;
     }
 
     // the push that check asked for; with selectionFor, it was asked for the selection alone, and the clipboard, unless the
     // master's has changed since, is left as it is (a baseline without a clipboard hash takes the push whole). What it
     // applied, if anything
-    internal static ClipboardSnapshot? ApplyPush(IClipboardSync sync, ClipboardPushMessage push, ClipboardBaseline? selectionFor, ILogger log, string host,
-        ClipboardWrite? write = null)
+    internal static ClipboardSnapshot? ApplyPush(IClipboardPlatform platform, ClipboardPushMessage push, ClipboardBaseline? selectionFor, ILogger log, string host,
+        AppliedWrite? write = null)
     {
         var context = $"push from {host}";
         var received = From(push, log, context);
         return selectionFor != null && ClipboardUtils.ClipboardHash(received) == selectionFor.Hash
-            ? TakeSelectionBeside(sync, push, selectionFor, log, context)
-            : ClipboardUtils.ApplyPreservingFiles(sync, received, log, context, write == null ? null : write.Took);
+            ? TakeSelectionBeside(platform, push, selectionFor, log, context)
+            : ClipboardUtils.ApplyPreservingFiles(platform, received, log, context, write == null ? null : write.Took);
     }
 
     // a slave's answer to a pull: unchanged when its clipboard matches the master's, with its selection beside it only
@@ -116,22 +116,22 @@ public static class ClipboardWire
 
     // the master's side of that answer, against what it pulled with: the selection alone beside an unchanged
     // clipboard, else the whole clipboard, which differs. What it applied, if anything
-    internal static ClipboardSnapshot? TakePullAnswer(IClipboardSync sync, ClipboardPullResponseMessage answer, ClipboardBaseline pulledAgainst, ILogger log,
-        string host, ClipboardWrite? write = null)
+    internal static ClipboardSnapshot? TakePullAnswer(IClipboardPlatform platform, ClipboardPullResponseMessage answer, ClipboardBaseline pulledAgainst, ILogger log,
+        string host, AppliedWrite? write = null)
     {
         var context = $"pull response from {host}";
         return answer.Unchanged == true
-            ? TakeSelectionBeside(sync, answer, pulledAgainst, log, context)
-            : ClipboardUtils.ApplyPreservingFiles(sync, From(answer, log, context), log, context, write == null ? null : write.Took);
+            ? TakeSelectionBeside(platform, answer, pulledAgainst, log, context)
+            : ClipboardUtils.ApplyPreservingFiles(platform, From(answer, log, context), log, context, write == null ? null : write.Took);
     }
 
     // the selection beside a clipboard this host already has, set if it differs; a primary repeating the text is the
     // receiver's own text. What it applied, if anything
-    private static ClipboardSnapshot? TakeSelectionBeside(IClipboardSync sync, IClipboardSelection m, ClipboardBaseline beside, ILogger log, string context)
+    private static ClipboardSnapshot? TakeSelectionBeside(IClipboardPlatform platform, IClipboardSelection m, ClipboardBaseline beside, ILogger log, string context)
     {
         var selection = Fit(Primary(beside.Text, m.PrimaryText, m.PrimaryIsText), "primary text", log, context);
         return selection != beside.PrimaryText && ClipboardSnapshot.SelectionOnly(selection) is { } alone
-            ? ClipboardUtils.ApplyPreservingFiles(sync, alone, log, context)
+            ? ClipboardUtils.ApplyPreservingFiles(platform, alone, log, context)
             : null;
     }
 

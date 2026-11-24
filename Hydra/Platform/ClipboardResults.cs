@@ -5,6 +5,9 @@ namespace Hydra.Platform;
 public sealed record ClipboardContents(string? Text, string? Html, byte[]? Rtf, byte[]? Png, bool Secret)
 {
     public static readonly ClipboardContents Empty = new(null, null, null, null, false);
+
+    // no format at all
+    public bool IsEmpty => string.IsNullOrEmpty(Text) && Html == null && Rtf == null && Png == null;
 }
 
 // the OS clipboard's change counter at one point; it only grows
@@ -33,4 +36,30 @@ public abstract record SelectionRead
     public sealed record None : SelectionRead;
 
     public sealed record Unreadable(string Reason, Exception? Cause = null) : SelectionRead;
+}
+
+// one write of the clipboard: what it took, at the count it left on the change counter (WroteAt, else the counter right
+// after it; null where the platform keeps none); a clipboard it did not replace; or one that could not be read where the
+// write needed to
+public abstract record ClipboardWrite
+{
+    private ClipboardWrite() { }
+
+    // Taken: the contents less any format the clipboard refused; Empty for a clear, and for a concealed copy whose markers
+    // were refused, the placeholder having gone in its place
+    public sealed record Written(ClipboardContents Taken, ClipboardVersion? At) : ClipboardWrite;
+
+    public sealed record NotReplaced(string Reason) : ClipboardWrite;
+
+    public sealed record Unreadable(string Reason, Exception? Cause = null) : ClipboardWrite;
+}
+
+// one write of the primary selection: kept, or not
+public abstract record SelectionWrite
+{
+    private SelectionWrite() { }
+
+    public sealed record Kept : SelectionWrite;
+
+    public sealed record NotKept(string Reason) : SelectionWrite;
 }

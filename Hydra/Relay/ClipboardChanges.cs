@@ -8,15 +8,15 @@ namespace Hydra.Relay;
 // both; every answer is null where the platform keeps no counter
 public sealed class ClipboardChanges
 {
-    private static readonly ConditionalWeakTable<IClipboardSync, ClipboardChanges> All = [];
+    private static readonly ConditionalWeakTable<IClipboard, ClipboardChanges> All = [];
 
-    private readonly IClipboardSync _sync;
+    private readonly IClipboard _sync;
     private readonly Lock _lock = new();
     private long? _wroteAt;
 
-    private ClipboardChanges(IClipboardSync sync) => _sync = sync;
+    private ClipboardChanges(IClipboard sync) => _sync = sync;
 
-    public static ClipboardChanges Of(IClipboardSync sync) => All.GetValue(sync, s => new ClipboardChanges(s));
+    public static ClipboardChanges Of(IClipboard sync) => All.GetValue(sync, s => new ClipboardChanges(s));
 
     public long? Now() => _sync.ChangeCount();
 

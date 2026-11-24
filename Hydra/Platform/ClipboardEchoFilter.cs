@@ -11,10 +11,10 @@ internal sealed class ClipboardEchoFilter(Func<bool> owned)
     private ulong? _lastRtfHash;
 
     // what Hydra has just written, so reading it back is an echo; every format, since the write replaced them all
-    public void Track(ClipboardSnapshot written)
+    public void Track(ClipboardContents written)
     {
         _lastText = written.Text;
-        _lastImageHash = Hash(written.ImagePng);
+        _lastImageHash = Hash(written.Png);
         _lastHtmlHash = Hash(written.Html);
         _lastRtfHash = Hash(written.Rtf);
     }

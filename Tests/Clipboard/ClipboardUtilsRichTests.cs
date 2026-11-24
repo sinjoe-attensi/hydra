@@ -22,8 +22,8 @@ public class ClipboardUtilsRichTests
     {
         // a write replaces every format, so an image Hydra wrote before a text is no echo once the user copies it again
         var echo = new ClipboardEchoFilter(() => true);
-        echo.Track(new ClipboardSnapshot(null, null, [9, 9]));
-        echo.Track(new ClipboardSnapshot("written", null, null));
+        echo.Track(new ClipboardContents(null, null, null, [9, 9], false));
+        echo.Track(new ClipboardContents("written", null, null, null, false));
 
         Assert.That(echo.FilterImage([9, 9]), Is.Not.Null);
     }
@@ -33,7 +33,7 @@ public class ClipboardUtilsRichTests
     {
         var owned = new StrongBox<bool>(true);
         var echo = new ClipboardEchoFilter(() => owned.Value);
-        echo.Track(new ClipboardSnapshot("written", null, [9, 9], "<b>written</b>", [7]));
+        echo.Track(new ClipboardContents("written", "<b>written</b>", [7], [9, 9], false));
         Assert.That(echo.FilterText("written"), Is.Null, "an echo while the clipboard is still the write");
         owned.Value = false; // the user copied the same contents again
 
@@ -503,8 +503,11 @@ public class ClipboardUtilsRichTests
     }
 
     // a platform whose one read is Read, as Windows reads under one open; asking it for files apart fails the test
-    private sealed class SnapshotOnlySync(ClipboardRead read) : IClipboardSync
+    private sealed class SnapshotOnlySync(ClipboardRead read) : IClipboardPlatform, IClipboard
     {
+        public IClipboard Clipboard => this;
+        public IPrimarySelection? PrimarySelection => null;
+
         public int Reads { get; private set; }
 
         public ClipboardRead Read()
@@ -513,27 +516,27 @@ public class ClipboardUtilsRichTests
             return read;
         }
 
-        public bool HasFileClipboard() => throw new AssertionException("read outside Read");
+        public bool HoldsFiles() => throw new AssertionException("read outside Read");
         public bool CanUseEchoFallback() => false;
-        public ClipboardSnapshot SetClipboard(ClipboardSnapshot contents) => contents;
+        public ClipboardWrite Write(ClipboardContents contents) => ClipboardUtils.Written(contents, null);
     }
 
     [Test]
     public void WriteAll_RefusedFormat_IsLeftOutOfWhatWasWritten()
     {
-        var contents = new ClipboardSnapshot("plain", "selection", null, Html: "<b>rich</b>", Rtf: [1]);
+        var contents = new ClipboardContents("plain", "<b>rich</b>", [1], null, false);
 
         var written = ClipboardUtils.WriteAll(Log, contents,
             new FormatWrite(ClipboardFormat.Html, () => false), null, new FormatWrite(ClipboardFormat.Text, () => true),
             new FormatWrite(ClipboardFormat.Rtf, () => false));
 
-        Assert.That(written, Is.EqualTo(new ClipboardSnapshot("plain", "selection", null)));
+        Assert.That(written, Is.EqualTo(new ClipboardContents("plain", null, null, null, false)));
     }
 
     [Test]
     public void WriteAll_EveryFormatTaken_IsTheWholeWrite()
     {
-        var contents = new ClipboardSnapshot("plain", null, null, Html: "<b>rich</b>");
+        var contents = new ClipboardContents("plain", "<b>rich</b>", null, null, false);
 
         var written = ClipboardUtils.WriteAll(Log, contents,
             new FormatWrite(ClipboardFormat.Html, () => true), new FormatWrite(ClipboardFormat.Text, () => true));

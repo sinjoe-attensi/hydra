@@ -8,14 +8,13 @@ namespace Tests.Setup;
 public enum ClipboardOs { Linux, MacOs, Windows }
 
 // An OS clipboard as Hydra's platform code sees it. What Hydra wrote reads back as an echo while it still holds the
-// clipboard. X11 has a PRIMARY selection; the others keep the real CopiedPrimary, versioned by a change counter as the
-// OS keeps one.
-public sealed class SimulatedClipboard : IClipboardSync
+// clipboard. X11 has a PRIMARY selection; the others are composed with the real EmulatedPrimarySelection, versioned by
+// a change counter as the OS keeps one.
+public sealed class SimulatedClipboard : IClipboardPlatform
 {
     private static readonly NullLogger Log = NullLogger.Instance;
 
     private readonly ClipboardOs _os;
-    private readonly CopiedPrimary _copied;
     private readonly ClipboardSlave _asSlave;
     private readonly ClipboardMaster _asMaster;
     // the streams this host takes as a slave and as a master; their watchdog never fires on a clock nobody steps
@@ -29,7 +28,9 @@ public sealed class SimulatedClipboard : IClipboardSync
     public SimulatedClipboard(ClipboardOs os)
     {
         _os = os;
-        _copied = new CopiedPrimary(() => _version, ReadTextCopy, Log);
+        var platform = ClipboardPlatform.Compose(new OsClipboard(this), Log);
+        Clipboard = platform.Clipboard;
+        PrimarySelection = platform.PrimarySelection;
         var clock = new FakeTimeProvider();
         // as SlaveRelayConnection builds them: a stream pending from the master counts as applied
         _asSlave = new ClipboardSlave(this, Log, PendingFromMaster);
@@ -45,7 +46,10 @@ public sealed class SimulatedClipboard : IClipboardSync
     public string? Text => _text == ClipboardSnapshot.PlaceholderText ? null : _text;
     private string? _text;
     public byte[]? ImagePng { get; private set; }
-    public string? Primary => ReadPrimary() is SelectionRead.Text { Value: var primary } ? primary : null;
+    public string? Primary => this.ReadSelection() is SelectionRead.Text { Value: var primary } ? primary : null;
+
+    public IClipboard Clipboard { get; }
+    public IPrimarySelection? PrimarySelection { get; }
     public int ClipboardWrites { get; private set; }
 
     // the incoming streams this host gave up on, because the clipboard was no longer Hydra's
@@ -124,45 +128,12 @@ public sealed class SimulatedClipboard : IClipboardSync
 
     private ulong? PendingFromMaster(string host) => _fromMaster.PendingFrom(host);
 
-    public ClipboardRead Read() => new ClipboardRead.Contents(new ClipboardContents(_owned ? null : _text, null, null, _owned ? null : ImagePng, Concealed));
-
-    public bool CanUseEchoFallback() => _owned;
-
-    // every copy and every one of Hydra's writes moves it, as the OS counter (X11: Hydra's owner-change counter) does
-    public long? ChangeCount() => _version;
-
-    public SelectionRead ReadPrimary() => _os != ClipboardOs.Linux ? _copied.Read()
-        : _x11Primary is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
-
-    public bool SetPrimaryText(string text)
-    {
-        if (_os == ClipboardOs.Linux) _x11Primary = text;
-        else _copied.Relay(text);
-        return true;
-    }
-
     // keeps only text and image, as Hydra's write leaves them here; the rest it takes as written, so echoes match
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
-    {
-        if (_os == ClipboardOs.Linux)
-        {
-            if (contents.PrimaryText != null) _x11Primary = contents.PrimaryText;
-            WriteClipboard(contents);
-            return contents;
-        }
-        return _copied.Write(contents.PrimaryText, leftAt =>
-        {
-            WriteClipboard(contents);
-            leftAt(_version);
-            return true;
-        }) ? contents : null;
-    }
-
-    private void WriteClipboard(ClipboardSnapshot contents)
+    private void WriteClipboard(ClipboardContents contents)
     {
         _text = contents.Text;
-        ImagePng = contents.ImagePng;
-        Concealed = contents.Concealed;
+        ImagePng = contents.Png;
+        Concealed = contents.Secret;
         ClipboardWrites++;
         _version++;
         _owned = true;
@@ -178,5 +149,46 @@ public sealed class SimulatedClipboard : IClipboardSync
         Concealed = concealed;
         _version++;
         _owned = false;
+    }
+
+    // the OS's own clipboard, with X11's PRIMARY beside it; elsewhere Compose keeps the emulated one
+    private sealed class OsClipboard(SimulatedClipboard os) : IClipboardPlatform, ISelectionlessClipboard
+    {
+        public IClipboard Clipboard => this;
+
+        public IPrimarySelection? PrimarySelection => os._os == ClipboardOs.Linux ? new X11Primary(os) : null;
+
+        public ClipboardRead Read() =>
+            new ClipboardRead.Contents(new ClipboardContents(os._owned ? null : os._text, null, null, os._owned ? null : os.ImagePng, os.Concealed));
+
+        public bool CanUseEchoFallback() => os._owned;
+
+        // every copy and every one of Hydra's writes moves it, as the OS counter (X11: Hydra's owner-change counter) does
+        public long? ChangeCount() => os._version;
+
+        public long Version() => os._version;
+
+        public SelectionRead ReadTextCopy() => os.ReadTextCopy();
+
+        public ClipboardWrite Write(ClipboardContents contents) => Write(contents, _ => { });
+
+        public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
+        {
+            var writing = ClipboardUtils.Writing(contents);
+            os.WriteClipboard(writing);
+            leftAt(os._version);
+            return ClipboardUtils.Written(writing, os._version);
+        }
+    }
+
+    private sealed class X11Primary(SimulatedClipboard os) : IPrimarySelection
+    {
+        public SelectionRead Read() => os._x11Primary is { } primary ? new SelectionRead.Text(primary) : new SelectionRead.None();
+
+        public SelectionWrite Write(string text)
+        {
+            os._x11Primary = text;
+            return new SelectionWrite.Kept();
+        }
     }
 }

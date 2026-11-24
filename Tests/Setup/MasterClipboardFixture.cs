@@ -12,7 +12,7 @@ namespace Tests.Setup;
 public abstract class MasterClipboardFixture : ServicesFixture
 {
     // a master with "remote" online, advertising remotePlatform
-    private protected async Task<TestServiceBundle> StartMaster(IClipboardSync clipboard, PeerPlatform remotePlatform = PeerPlatform.Linux,
+    private protected async Task<TestServiceBundle> StartMaster(IClipboardPlatform clipboard, PeerPlatform remotePlatform = PeerPlatform.Linux,
         IHydraProfile? profile = null, PeerPlatform? localPlatform = null)
     {
         var bundle = TransitionTestHelper.CreateService(profile: profile, clipboard: clipboard, localPlatform: localPlatform);
@@ -106,7 +106,7 @@ public abstract class MasterClipboardFixture : ServicesFixture
 
     // remote2 ← home → remote, both online; flushActorOnly has the router's fire callback flush the actor alone, never
     // waiting on a parked read
-    private protected async Task<TestServiceBundle> StartSides(IClipboardSync clipboard, TimeProvider? clock = null, IOsdNotification? osd = null,
+    private protected async Task<TestServiceBundle> StartSides(IClipboardPlatform clipboard, TimeProvider? clock = null, IOsdNotification? osd = null,
         IScreenSaverSync? screensaver = null, ILogger<InputRouter>? log = null, bool flushActorOnly = false)
     {
         var bundle = TransitionTestHelper.CreateService(profile: SidesConfig, clipboard: clipboard, timeProvider: clock, osd: osd,
@@ -116,7 +116,7 @@ public abstract class MasterClipboardFixture : ServicesFixture
     }
 
     // home → remote → remote2, both online
-    private protected Task<TestServiceBundle> StartChain(IClipboardSync clipboard, TimeProvider? clock = null) =>
+    private protected Task<TestServiceBundle> StartChain(IClipboardPlatform clipboard, TimeProvider? clock = null) =>
         Services.StartOnline(TransitionTestHelper.CreateService(profile: TransitionTestHelper.ChainConfig, clipboard: clipboard, timeProvider: clock),
             "remote", "remote2");
 

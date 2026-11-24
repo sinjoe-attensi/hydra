@@ -8,8 +8,9 @@ namespace Hydra.Platform.Linux.Wayland;
 // The Wayland clipboard through the portal's Clipboard interface on the run's portal session. A write offers every
 // format at once (SetSelection) and answers each SelectionTransfer from the bytes it keeps; a read takes the MIME types
 // the last SelectionOwnerChanged listed, each through SelectionRead. The portal has no primary selection, so this keeps
-// a CopiedPrimary as macOS and Windows do. Without a portal clipboard every call goes to wl-clipboard
-// (WaylandClipboardSync), or to nothing (NullClipboardSync) when that is missing too.
+// an EmulatedPrimarySelection as Hydra does for macOS and Windows, every write to the portal made through it. Without a
+// portal clipboard every call goes to wl-clipboard (WaylandClipboardSync), its primary selection too, or to nothing
+// (NullClipboardSync) when that is missing too.
 //
 // The change counter moves on Hydra's own writes and on each owner change to another client, an owner gone (no types)
 // excepted. Notices are delivered in order, so one arriving while a write is under way, or after it until the portal
@@ -27,7 +28,7 @@ namespace Hydra.Platform.Linux.Wayland;
 // reverse) cannot be served and fails. A transfer waits a little for the latest pull to settle (TransferWait, once per pull),
 // then serves the newest: that answer, else the own copy. The own copy is the user's, not Hydra's write: it reads back
 // as itself, moves no counter, and allows no echo fallback.
-internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICaptureClipboard, IAsyncDisposable
+internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPullObserver, ICaptureClipboard, IAsyncDisposable
 {
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(2);
     // how long a call waits for the portal session before taking the clipboard as unknown
@@ -38,12 +39,14 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     internal static readonly TimeSpan TransferWait = TimeSpan.FromSeconds(3);
 
     private readonly Func<CancellationToken, Task<IPortalClipboard?>> _clipboard;
-    private readonly Func<IClipboardSync> _fallbackFactory;
+    private readonly Func<IClipboardPlatform> _fallbackFactory;
     private readonly TimeProvider _time;
     // set once, and a logger is safe on any thread: read without either lock
     private ILogger Log { get; }
     private readonly IWaylandSession? _session;
-    private readonly CopiedPrimary _primary;
+    // the selection beside the portal's clipboard, which every write to it goes through
+    private readonly EmulatedPrimarySelection _primary;
+    private readonly LastWrite _lastWrite;
     private readonly CancellationTokenSource _stop = new();
     // _stop's token, kept so the reads and the connect can take it without touching _stop, which DisposeAsync disposes
     private readonly CancellationToken _stopping;
@@ -55,7 +58,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // everything below
     private readonly Lock _lock = new();
     private IPortalClipboard? _portal;
-    private IClipboardSync? _fallback;
+    private IClipboardPlatform? _fallback;
     private Task? _connecting;
     private int _epoch;
     private bool _everConnected;
@@ -108,7 +111,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     }
 
     // tests: the portal's clipboard and the fallback from elsewhere
-    internal PortalClipboardSync(Func<CancellationToken, Task<IPortalClipboard?>> clipboard, Func<IClipboardSync> fallback, TimeProvider time,
+    internal PortalClipboardSync(Func<CancellationToken, Task<IPortalClipboard?>> clipboard, Func<IClipboardPlatform> fallback, TimeProvider time,
         ILogger log)
     {
         _clipboard = clipboard;
@@ -116,10 +119,18 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         _time = time;
         Log = log;
         _stopping = _stop.Token;
-        _primary = new CopiedPrimary(Count, ReadTextCopy, log);
+        _lastWrite = new LastWrite(Count, log);
+        _primary = new EmulatedPrimarySelection(new PortalOnly(this), log);
+        PrimarySelection = new DelegatedSelection(ReadPrimary, SetPrimaryText);
     }
 
-    private static IClipboardSync CreateFallback(ILogger log)
+    public IClipboard Clipboard => this;
+
+    // the emulated selection while the portal offers the clipboard, else the fallback's
+    public IPrimarySelection PrimarySelection { get; }
+    IPrimarySelection? IClipboardPlatform.PrimarySelection => PrimarySelection;
+
+    private static IClipboardPlatform CreateFallback(ILogger log)
     {
         if (WaylandClipboardSync.Available) return new WaylandClipboardSync(log);
         if (log.IsEnabled(LogLevel.Warning)) log.LogWarning("Neither the portal nor wl-clipboard offers the clipboard; it is not synced");
@@ -131,7 +142,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
 
     public ClipboardRead Read() => Resolve(wait: true) switch
     {
-        { Fallback: { } fallback } => fallback.Read(),
+        { Fallback: { } fallback } => fallback.Clipboard.Read(),
         { Portal: { } portal } => Readable(portal),
         _ => new ClipboardRead.Unreadable("the portal's clipboard is not connected"),
     };
@@ -148,31 +159,32 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         }
     }
 
-    public SelectionRead ReadPrimary() => Resolve(wait: true) switch
+    private SelectionRead ReadPrimary() => Resolve(wait: true) switch
     {
-        { Fallback: { } fallback } => fallback.ReadPrimary(),
+        { Fallback: { } fallback } => fallback.ReadSelection(),
         { Portal: not null } => _primary.Read(),
         _ => new SelectionRead.Unreadable("the portal's clipboard is not connected"),
     };
 
-    public bool SetPrimaryText(string text) => Resolve(wait: true) switch
+    private SelectionWrite SetPrimaryText(string text) => Resolve(wait: true) switch
     {
-        { Fallback: { } fallback } => fallback.SetPrimaryText(text),
-        { Portal: not null } => _primary.Relay(text),
-        _ => false,
+        { Fallback: { PrimarySelection: { } selection } } => selection.Write(text),
+        { Fallback: not null } => new SelectionWrite.NotKept("the clipboard in the portal's place keeps no primary selection"),
+        { Portal: not null } => _primary.Write(text),
+        _ => new SelectionWrite.NotKept("the portal's clipboard is not connected"),
     };
 
-    public bool HasFileClipboard() => Resolve(wait: false) is { Fallback: { } fallback } && fallback.HasFileClipboard();
+    public bool HoldsFiles() => Resolve(wait: false) is { Fallback: { } fallback } && fallback.Clipboard.HoldsFiles();
 
     public bool CanUseEchoFallback()
     {
-        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.CanUseEchoFallback();
+        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.CanUseEchoFallback();
         lock (_lock) return OwnsWrite();
     }
 
     public long? ChangeCount()
     {
-        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.ChangeCount();
+        if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.ChangeCount();
         lock (_lock)
         {
             if (!_everConnected) return null;
@@ -181,29 +193,24 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         }
     }
 
-    public long? WroteAt() => Resolve(wait: false) is { Fallback: { } fallback } ? fallback.WroteAt() : _primary.WrittenAt();
+    public long? WroteAt() => Resolve(wait: false) is { Fallback: { } fallback } ? fallback.Clipboard.WroteAt() : _lastWrite.At;
 
-    public ClipboardSnapshot? SetClipboard(ClipboardSnapshot contents)
+    public ClipboardWrite Write(ClipboardContents contents) => Resolve(wait: true) switch
     {
-        switch (Resolve(wait: true))
-        {
-            case { Fallback: { } fallback }:
-                return fallback.SetClipboard(contents);
-            case { Portal: { } portal }:
-                ClipboardSnapshot? written = null;
-                var replaced = _primary.Write(contents.PrimaryText, leftAt =>
-                {
-                    written = Offer(portal, contents, leftAt);
-                    return written != null;
-                });
-                return replaced ? written : null;
-            default:
-                return null;
-        }
-    }
+        { Fallback: { } fallback } => fallback.Clipboard.Write(contents),
+        { Portal: not null } => _primary.Clipboard.Write(contents),
+        _ => new ClipboardWrite.NotReplaced("the portal's clipboard is not connected"),
+    };
 
-    public bool ClearClipboard() =>
-        Resolve(wait: false) is { Fallback: { } fallback } ? fallback.ClearClipboard() : SetClipboard(ClipboardSnapshot.Placeholder) != null;
+    // the write to the portal itself, which the emulated selection makes: to the portal as it stands
+    private ClipboardWrite WritePortal(ClipboardContents contents, Action<long> leftAt)
+    {
+        IPortalClipboard? portal;
+        lock (_lock) portal = _portal;
+        if (portal == null) return new ClipboardWrite.NotReplaced("the portal's clipboard is not connected");
+        contents = ClipboardUtils.Writing(contents);
+        return _lastWrite.Write(left => Offer(portal, contents, left), leftAt, ChangeCount);
+    }
 
     // the latest pull the master sent, which a transfer waits for before serving
     public void PullSent(Task settled)
@@ -302,16 +309,13 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // the owner's offer
     private Dictionary<string, byte[]> ClaimServing(IPortalClipboard portal, ClipboardContents own)
     {
-        var serving = Serving(Snapshot(own));
+        var serving = Serving(own);
         if (serving.GetValueOrDefault(WaylandMime.OfferedText[0]) is { } text)
             foreach (var type in WaylandMime.Text)
                 serving[type] = text;
         KeepOthers(portal, serving, own);
         return serving;
     }
-
-    // a read of the clipboard as the snapshot a write of it serves
-    private static ClipboardSnapshot Snapshot(ClipboardContents read) => new(read.Text, null, read.Png, read.Html, read.Rtf, read.Secret);
 
     // The rest of the owner's offer, so a claim loses none of the master's own formats: the X11 text atoms served as its
     // text, and every other type (a file copy's URI list, another image type) read as bytes and served as read, within
@@ -469,7 +473,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // change reads as empty, not unreadable
     private static bool Absent(Exception? e) => e is DBusErrorReplyException { ErrorName: "org.freedesktop.portal.Error.Failed" };
 
-    // CopiedPrimary's readTextCopy: the text of another client's copy, none for an image or a concealed copy
+    // the text of another client's copy, none for an image or a concealed copy
     private SelectionRead ReadTextCopy()
     {
         IPortalClipboard? portal;
@@ -522,10 +526,10 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
     // Hydra's write: every format at once, the bytes kept to answer each transfer; null when the portal refused it. One
     // the portal refuses (the capture released) still lands, fitted to it, while a claim's selection stands: it
     // replaces what is served
-    private ClipboardSnapshot? Offer(IPortalClipboard portal, ClipboardSnapshot contents, Action<long> leftAt)
+    private ClipboardContents? Offer(IPortalClipboard portal, ClipboardContents contents, Action<long> leftAt)
     {
         var serving = Serving(contents);
-        // nothing for the clipboard: left as it is, never cleared through an empty offer; CopiedPrimary keeps the selection
+        // nothing for the clipboard: left as it is, never cleared through an empty offer
         if (serving.Count == 0) return contents;
         lock (_selectGate)
         {
@@ -536,7 +540,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
                 leftAt(at);
                 return contents;
             }
-            if (claims && Replace(serving, contents.IsClear, out at))
+            if (claims && Replace(serving, ClipboardUtils.IsPlaceholder(contents), out at))
             {
                 if (Log.IsEnabled(LogLevel.Debug))
                     Log.LogDebug("The portal sets the clipboard only during a capture; the session's selection serves the write");
@@ -735,9 +739,9 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         return failed == null;
     }
 
-    // every MIME type the snapshot can be served as; the concealed copy and the placeholder carry KDE's hint, so
+    // every MIME type the contents can be served as; the concealed copy and the placeholder carry KDE's hint, so
     // clipboard managers keep neither
-    private static Dictionary<string, byte[]> Serving(ClipboardSnapshot contents)
+    private static Dictionary<string, byte[]> Serving(ClipboardContents contents)
     {
         var serving = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         if (!string.IsNullOrEmpty(contents.Text))
@@ -747,8 +751,8 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         }
         if (contents.Html != null) serving[WaylandMime.Html] = Encoding.UTF8.GetBytes(contents.Html);
         if (contents.Rtf != null) serving[WaylandMime.Rtf] = contents.Rtf;
-        if (contents.ImagePng != null) serving[WaylandMime.Png] = contents.ImagePng;
-        if (contents.Concealed || contents.IsClear) serving[WaylandMime.PasswordHint] = WaylandMime.Secret;
+        if (contents.Png != null) serving[WaylandMime.Png] = contents.Png;
+        if (contents.Secret || ClipboardUtils.IsPlaceholder(contents)) serving[WaylandMime.PasswordHint] = WaylandMime.Secret;
         return serving;
     }
 
@@ -882,7 +886,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
             return;
         }
 
-        IClipboardSync fallback;
+        IClipboardPlatform fallback;
         lock (_lock)
         {
             if (_disposed || epoch != _epoch) return;
@@ -933,7 +937,7 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
 
     public async ValueTask DisposeAsync()
     {
-        IClipboardSync? fallback;
+        IClipboardPlatform? fallback;
         lock (_lock)
         {
             if (_disposed) return;
@@ -948,8 +952,28 @@ internal sealed class PortalClipboardSync : IClipboardSync, IPullObserver, ICapt
         else if (fallback is IDisposable disposable) disposable.Dispose();
     }
 
-    // the portal's clipboard, or the sync every call goes to in its place
-    private sealed record Backend(IPortalClipboard? Portal, IClipboardSync? Fallback);
+    // the portal's clipboard, or the platform every call goes to in its place
+    private sealed record Backend(IPortalClipboard? Portal, IClipboardPlatform? Fallback);
+
+    // the portal's own clipboard, as the emulated selection beside it sees it
+    private sealed class PortalOnly(PortalClipboardSync sync) : ISelectionlessClipboard
+    {
+        public long Version() => sync.Count();
+
+        public SelectionRead ReadTextCopy() => sync.ReadTextCopy();
+
+        public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt) => sync.WritePortal(contents, leftAt);
+
+        public ClipboardWrite Write(ClipboardContents contents) => Write(contents, _ => { });
+
+        public ClipboardRead Read() => sync.Read();
+
+        public bool CanUseEchoFallback() => sync.CanUseEchoFallback();
+
+        public long? ChangeCount() => sync.ChangeCount();
+
+        public long? WroteAt() => sync.WroteAt();
+    }
 
     private sealed record GenerationRead(long Generation, ClipboardContents Read);
 

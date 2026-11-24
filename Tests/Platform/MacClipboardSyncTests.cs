@@ -9,12 +9,12 @@ namespace Tests.Platform;
 // a private named pasteboard, so the user's clipboard is left alone
 [TestFixture]
 [SupportedOSPlatform("macos")]
-public class MacClipboardSyncTests : CopiedPrimaryContract
+public class MacClipboardSyncTests : EmulatedPrimarySelectionContract
 {
     // one name, since a named pasteboard outlives the run
     private const string PasteboardName = "org.c-net.hydra.tests";
 
-    protected override IClipboardSync Create() => new MacClipboardSync(NullLogger<MacClipboardSync>.Instance, PasteboardName);
+    protected override IClipboardPlatform Create() => new MacClipboardSync(NullLogger<MacClipboardSync>.Instance, PasteboardName);
 
     [TestCase("org.nspasteboard.ConcealedType")]
     [TestCase("org.nspasteboard.TransientType")]
@@ -24,7 +24,7 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     {
         HydraWritesThen(() => WriteForeignCopy("secret or name", marker));
 
-        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("relayed selection"));
+        Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("relayed selection"));
     }
 
     [Test]
@@ -33,13 +33,13 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
         // a TIFF is not read as an image, so the copy travels as text and is the primary too
         HydraWritesThen(() => WriteForeignCopy("copied", "public.tiff"));
 
-        Assert.That(Hydra.ReadPrimary().TextOrNone(), Is.EqualTo("copied"));
+        Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("copied"));
     }
 
     [Test]
     public void Clear_MarksThePlaceholderTransient_ButNotConcealed()
     {
-        Hydra.ClearClipboard();
+        Clear();
 
         var types = Types();
         using (Assert.EnterMultipleScope())
@@ -53,7 +53,7 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     public void ReadAll_ACopyDuringTheRead_ReadsTheNewCopyWhole()
     {
         WriteForeignCopy("username", "public.html");
-        var sync = (MacClipboardSync)Hydra;
+        var sync = (MacClipboardSync)Raw;
         var copies = 0;
         sync.DuringRead = () =>
         {
@@ -73,7 +73,7 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     public void ReadAll_CopiesDuringEveryRead_IsUnreadable()
     {
         WriteForeignCopy("username", "public.html");
-        var sync = (MacClipboardSync)Hydra;
+        var sync = (MacClipboardSync)Raw;
         sync.DuringRead = () => WriteForeignCopy("password", "org.nspasteboard.ConcealedType");
 
         Assert.That(sync.Read(), Is.InstanceOf<ClipboardRead.Unreadable>());
@@ -83,8 +83,8 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     public void ReadAll_AConcealedCopy_IsConcealed_AndThePlaceholderReadsAsNoCopy()
     {
         WriteForeignCopy("secret", "org.nspasteboard.ConcealedType");
-        var concealed = Hydra.Read().AsContents();
-        Hydra.ClearClipboard();
+        var concealed = Hydra.Clipboard.Read().AsContents();
+        Clear();
         var placeholder = ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
@@ -98,12 +98,12 @@ public class MacClipboardSyncTests : CopiedPrimaryContract
     [Test]
     public void SetClipboard_Concealed_WritesBothMarkers()
     {
-        var written = Hydra.SetClipboard(new ClipboardSnapshot("secret", null, null, Concealed: true));
+        var written = Taken(Write(new ClipboardSnapshot("secret", null, null, Concealed: true)));
 
         var types = Types();
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(written, Is.EqualTo(new ClipboardSnapshot("secret", null, null, Concealed: true)));
+            Assert.That(written, Is.EqualTo(new ClipboardContents("secret", null, null, null, true)));
             Assert.That(types, Does.Contain("org.nspasteboard.ConcealedType"));
             Assert.That(types, Does.Contain("org.nspasteboard.TransientType"));
         }

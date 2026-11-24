@@ -22,7 +22,7 @@ public enum BeginDecision { Cleared, ClearFailed, Keep }
 // empty and raises Failed, so its sender is Aborted and FailedOsd shown; only accepts streams of one inner kind
 // begun gets the host and the Begin's content hash; rejected the host of a Begin rejected, which empties only Hydra's
 // own write
-public sealed class ClipboardStreamReceiver(IClipboardSync sync, Func<string, ulong, BeginDecision> begun, Func<string, BeginDecision> rejected,
+public sealed class ClipboardStreamReceiver(IClipboardPlatform platform, Func<string, ulong, BeginDecision> begun, Func<string, BeginDecision> rejected,
     TimeProvider clock, ILogger log, MessageKind accepts = MessageKind.ClipboardPush)
     : IDisposable
 {
@@ -334,7 +334,7 @@ public sealed class ClipboardStreamReceiver(IClipboardSync sync, Func<string, ul
             before = stream.Decision;
         }
         // the platform is asked outside _lock, which it must never wait under
-        if (before != BeginDecision.ClearFailed) return before == BeginDecision.Keep || sync.CanUseEchoFallback();
+        if (before != BeginDecision.ClearFailed) return before == BeginDecision.Keep || platform.Clipboard.CanUseEchoFallback();
         var decision = begun(host, stream.Begin.ContentHash);
         lock (_lock)
             if (_byHost.TryGetValue(host, out var current) && current == stream) stream.Decision = decision;

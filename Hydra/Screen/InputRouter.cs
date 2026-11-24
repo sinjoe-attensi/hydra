@@ -23,7 +23,7 @@ public class InputRouter(
     ILoggerFactory loggerFactory,
     ILogger<InputRouter> log,
     IScreenSaverSync screenSaverSync,
-    IClipboardSync clipboardSync,
+    IClipboardPlatform clipboardSync,
     FileTransferService fileTransfer,
     IFileSelectionDetector selectionDetector,
     IOsdNotification osd,

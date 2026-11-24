@@ -394,31 +394,39 @@ if (config != null)
         services.AddSingleton<IScreenSaverSync, NullScreenSaverSync>();
 
     // clipboardSync Off never reads or writes the clipboard
+    Func<IServiceProvider, IClipboardPlatform> clipboard;
     if (profile.SharingOff)
-        services.AddSingleton<IClipboardSync, NullClipboardSync>();
+        clipboard = ClipboardOf<NullClipboardSync>(services);
     else if (OperatingSystem.IsMacOS())
-        services.AddSingleton<IClipboardSync, MacClipboardSync>();
+        clipboard = ClipboardOf<MacClipboardSync>(services);
     else if (OperatingSystem.IsWindows())
-        services.AddSingleton<IClipboardSync, WindowsClipboardSync>();
+        clipboard = ClipboardOf<WindowsClipboardSync>(services);
     else
         switch (LinuxClipboards.Choose(wayland, hasXDisplay, profile.Mode))
         {
             case LinuxClipboard.Portal:
                 // wl-clipboard when the portal has no clipboard; the master's input handler claims it for each visit
-                services.AddSingleton<PortalClipboardSync>();
-                services.AddSingleton<IClipboardSync>(sp => sp.GetRequiredService<PortalClipboardSync>());
+                clipboard = ClipboardOf<PortalClipboardSync>(services);
                 services.AddSingleton<ICaptureClipboard>(sp => sp.GetRequiredService<PortalClipboardSync>());
                 break;
             case LinuxClipboard.Xorg:
-                services.AddSingleton<IClipboardSync, XorgClipboardSync>();
+                clipboard = ClipboardOf<XorgClipboardSync>(services);
                 break;
             case LinuxClipboard.Memory:
-                services.AddSingleton<IClipboardSync, MemoryClipboardSync>();
+                clipboard = ClipboardOf<MemoryClipboardSync>(services);
                 break;
             default:
-                services.AddSingleton<IClipboardSync, NullClipboardSync>();
+                clipboard = ClipboardOf<NullClipboardSync>(services);
                 break;
         }
+    services.AddSingleton(clipboard);
+
+    // the platform, kept and disposed by the container, as Hydra uses it: with an emulated primary selection where it has none
+    static Func<IServiceProvider, IClipboardPlatform> ClipboardOf<T>(IServiceCollection services) where T : class, IClipboardPlatform
+    {
+        services.AddSingleton<T>();
+        return sp => ClipboardPlatform.Compose(sp.GetRequiredService<T>(), sp.GetRequiredService<ILogger<T>>());
+    }
 
     if (!RunMode.IsSessionChild)
         services.AddHostedService<SelfUpdater>();

@@ -17,7 +17,7 @@ public sealed class SlaveRelays
     }
 
     // a slave on clipboard, its OSD and clock as given, stopped with the rest
-    public TestableSlaveRelay New(IClipboardSync clipboard, IOsdNotification osd, TimeProvider clock, ILogger<RelayConnection>? log = null) =>
+    public TestableSlaveRelay New(IClipboardPlatform clipboard, IOsdNotification osd, TimeProvider clock, ILogger<RelayConnection>? log = null) =>
         Add(new TestableSlaveRelay(clipboard: clipboard, osd: osd, clock: clock, log: log));
 
     public async Task StopAll()

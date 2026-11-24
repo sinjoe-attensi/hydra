@@ -69,7 +69,7 @@ public static class TransitionTestHelper
     public static TestServiceBundle CreateService(IActivityTracker? activityTracker = null, IWorldState? world = null,
         TimeProvider? timeProvider = null, IHydraProfile? profile = null, IFileSelectionDetector? selectionDetector = null, IOsdNotification? osd = null,
         FileTransferService? fileTransfer = null, IScreenSaverSync? screenSaverSync = null, FakeScreenDetector? screens = null,
-        ILogger<InputRouter>? log = null, IClipboardSync? clipboard = null, PeerPlatform? localPlatform = null, ILoggerFactory? loggerFactory = null,
+        ILogger<InputRouter>? log = null, IClipboardPlatform? clipboard = null, PeerPlatform? localPlatform = null, ILoggerFactory? loggerFactory = null,
         IWindowFocus? windowFocus = null)
     {
         var platform = new FakePlatform();
