@@ -49,7 +49,7 @@ public sealed class MemoryClipboardSync : IClipboardPlatform, IClipboard
         lock (_lock)
         {
             _contents = ClipboardUtils.Writing(contents);
-            return ClipboardUtils.Written(_contents, ++_changes);
+            return ClipboardUtils.Written(contents, _contents, ++_changes);
         }
     }
 }

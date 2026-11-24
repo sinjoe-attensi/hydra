@@ -45,8 +45,9 @@ public abstract record ClipboardWrite
 {
     private ClipboardWrite() { }
 
-    // Taken: the contents less any format the clipboard refused; Empty for a clear, and for a concealed copy whose markers
-    // were refused, the placeholder having gone in its place
+    // Taken: the contents less any format the clipboard refused, so no format at all when it refused every one; Empty for
+    // a clear. A secret copy whose markers were refused: the placeholder that went in its place (ClipboardUtils.IsPlaceholder),
+    // less its text when that was refused too
     public sealed record Written(ClipboardContents Taken, ClipboardVersion? At) : ClipboardWrite;
 
     public sealed record NotReplaced(string Reason) : ClipboardWrite;

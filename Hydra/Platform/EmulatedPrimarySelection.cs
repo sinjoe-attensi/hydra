@@ -140,7 +140,7 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
 
         public ClipboardVersion? Version => clipboard.Version;
 
-        public bool StillHolds(ClipboardWrite.Written? write) => clipboard.StillHolds(write);
+        public bool StillHolds() => clipboard.StillHolds();
     }
 }
 
@@ -174,10 +174,10 @@ internal sealed class LastWrite(Func<long> counter, ILogger log)
         }
     }
 
-    // Hydra's write: it reports the version it leaves the clipboard at to leftAt as soon as it knows it, and returns what
-    // it wrote, null when it did not replace the clipboard. The version is kept once the write ends, even a failed or
-    // partial write's; At is that version, else the counter right after the write
-    public ClipboardWrite Write(Func<Action<long>, ClipboardContents?> write, Action<long> leftAt, Func<long?> after)
+    // Hydra's write of asked: it reports the version it leaves the clipboard at to leftAt as soon as it knows it, and
+    // returns what it wrote, null when it did not replace the clipboard. The version is kept once the write ends, even a
+    // failed or partial write's; At is that version, else the counter right after the write
+    public ClipboardWrite Write(ClipboardContents asked, Func<Action<long>, ClipboardContents?> write, Action<long> leftAt, Func<long?> after)
     {
         long? left = null;
         ClipboardContents? written;
@@ -195,6 +195,6 @@ internal sealed class LastWrite(Func<long> counter, ILogger log)
                 lock (_lock)
                     _at = v;
         }
-        return written is { } took ? ClipboardUtils.Written(took, At ?? after()) : new ClipboardWrite.NotReplaced("the clipboard was not replaced");
+        return written is { } took ? ClipboardUtils.Written(asked, took, At ?? after()) : new ClipboardWrite.NotReplaced("the clipboard was not replaced");
     }
 }

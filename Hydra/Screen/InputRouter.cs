@@ -833,7 +833,7 @@ public class InputRouter(
             return;
         }
         if (taken.Failed) await ShowFailedWhereTheCursorIs();
-        IReadOnlyList<string> aborted = taken.Applied is Applied.Copy or Applied.Emptied ? _streams.AbortPushes() : [];
+        IReadOnlyList<string> aborted = taken.Applied is Applied.Copy or Applied.Cleared or Applied.MarkersRefused ? _streams.AbortPushes() : [];
         AbortSuperseded(taken.Superseded);
         var waiting = _offer.Answered(pull, taken.Superseded);
         var due = SendOwedHashes();

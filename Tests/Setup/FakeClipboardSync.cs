@@ -91,7 +91,7 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
 
     public bool HoldsFiles() => HasFileClipboardValue;
 
-    public bool StillHolds(ClipboardWrite.Written? write) => StillHoldsValue;
+    public bool StillHolds() => StillHoldsValue;
 
     public ClipboardVersion? Version
     {
@@ -131,7 +131,8 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
         // mirror real implementations: every format replaced, a refused one left empty
         if (WriteFailsValue) return new ClipboardWrite.NotReplaced("the fake's write fails");
         _wroteAt = ++_changes;
-        // as the platforms do when the markers are refused: the placeholder in place of the copy, taken as empty
+        // as the platforms do when the markers are refused: the placeholder in place of the copy, its text refused as any
+        // text is; the fake keeps nothing of it, as Hydra reads it as empty
         if (contents.Secret && RefusesMarkersValue)
         {
             Text = null;
@@ -139,7 +140,7 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
             Html = null;
             Rtf = null;
             ConcealedValue = false;
-            return Written(ClipboardContents.Empty);
+            return Written(new ClipboardContents(Kept(ClipboardFormat.Text, ClipboardUtils.PlaceholderText), null, null, null, false));
         }
         var written = contents with
         {

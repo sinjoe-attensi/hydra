@@ -845,6 +845,50 @@ public class ClipboardHandshakeTests
         }
     }
 
+    // the placeholder in place of the concealed push refused too: a failed write, still Hydra's own, never the user's copy
+    [Test]
+    public void SlavePush_ConcealedMarkersAndThePlaceholderRefused_IsAFailedWriteOfHydras()
+    {
+        var sync = new FakeClipboardSync();
+        var log = new CapturingLog<ClipboardSlave>();
+        var slave = new ClipboardSlave(sync, log, NothingPending);
+        slave.Entered("master");
+        sync.RefusesMarkersValue = true;
+        sync.RefusedFormats.Add(ClipboardFormat.Text);
+        var at = sync.Version;
+
+        var failed = slave.OnPush(new ClipboardPushMessage("hunter2", Concealed: true), "master");
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(failed, Is.True);
+            Assert.That(ClipboardChanges.Of(sync).CopiedSince(at), Is.False, "Hydra's own write");
+            var warnings = log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message).ToList();
+            Assert.That(warnings, Has.Some.Contains("could not be written"));
+            Assert.That(warnings, Has.None.Contains("concealed markers"));
+        }
+    }
+
+    // a peer's copy that is the placeholder alone is taken as refused markers, as it always was
+    [Test]
+    public void SlavePush_ThePlaceholderAlone_IsTakenAsRefusedMarkers()
+    {
+        var sync = new FakeClipboardSync();
+        var log = new CapturingLog<ClipboardSlave>();
+        var slave = new ClipboardSlave(sync, log, NothingPending);
+        slave.Entered("master");
+        var at = sync.Version;
+
+        var failed = slave.OnPush(new ClipboardPushMessage(ClipboardUtils.PlaceholderText), "master");
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(failed, Is.True);
+            Assert.That(ClipboardChanges.Of(sync).CopiedSince(at), Is.False, "Hydra's own write");
+            Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message), Has.Some.Contains("concealed"));
+        }
+    }
+
     // a push that could not be written is a failure, shown here
     [Test]
     public void SlavePush_CannotBeWritten_IsAFailure()
@@ -1419,7 +1463,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(taken.Taken, Is.True);
-            Assert.That(taken.Applied, Is.InstanceOf<Applied.Emptied>(), "the clear is what it wrote, offered on");
+            Assert.That(taken.Applied, Is.InstanceOf<Applied.Cleared>(), "the clear is what it wrote, offered on");
             Assert.That(sync.ClearClipboardCallCount, Is.EqualTo(1));
             Assert.That(sync.Text, Is.Null);
             Assert.That(hash?.Cleared, Is.True);
@@ -1676,6 +1720,72 @@ public class ClipboardHandshakeTests
             Assert.That(ClipboardChanges.Of(sync).CopiedSince(at), Is.False, "Hydra's own write");
             Assert.That(master.Pull("b").MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(ClipboardContents.Empty)));
             Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message), Has.Some.Contains("a").And.Contains("concealed"));
+        }
+    }
+
+    // the placeholder in place of the concealed answer refused too: a failed write, asked again, still Hydra's own
+    [Test]
+    public void MasterApply_ConcealedMarkersAndThePlaceholderRefused_IsAFailedWriteOfHydras()
+    {
+        var sync = new FakeClipboardSync();
+        var log = new CapturingLog<ClipboardMaster>();
+        var master = new ClipboardMaster(sync, log);
+        sync.RefusesMarkersValue = true;
+        sync.RefusedFormats.Add(ClipboardFormat.Text);
+        var at = sync.Version;
+
+        var pull = master.Pull("a");
+        var taken = master.TakePullAnswer("a", new ClipboardPullResponseMessage(pull.PullId, "hunter2", Concealed: true));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(taken.Failed, Is.True);
+            Assert.That(ClipboardChanges.Of(sync).CopiedSince(at), Is.False, "Hydra's own write");
+            var warnings = log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message).ToList();
+            Assert.That(warnings, Has.Some.Contains("could not be written"));
+            Assert.That(warnings, Has.None.Contains("concealed markers"));
+        }
+    }
+
+    // a peer's answer that is the placeholder alone is taken as refused markers, as it always was, and the master knows
+    // its write by the placeholder's hash
+    [Test]
+    public void MasterApply_ThePlaceholderAlone_IsTakenAsRefusedMarkers()
+    {
+        var sync = new FakeClipboardSync();
+        var log = new CapturingLog<ClipboardMaster>();
+        var master = new ClipboardMaster(sync, log);
+
+        var pull = master.Pull("a");
+        var taken = master.TakePullAnswer("a", new ClipboardPullResponseMessage(pull.PullId, ClipboardUtils.PlaceholderText));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(taken.Failed, Is.True);
+            Assert.That(taken.Applied, Is.InstanceOf<Applied.Cleared>());
+            Assert.That(master.Pull("b").MasterHash, Is.EqualTo(ClipboardUtils.ClipboardHash(Snapshot(ClipboardUtils.PlaceholderText, null, null).Clipboard)));
+            Assert.That(log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message), Has.Some.Contains("concealed markers"));
+        }
+    }
+
+    // its text refused: a failed write, asked again, never taken as refused markers
+    [Test]
+    public void MasterApply_ThePlaceholderAlone_ItsTextRefused_IsAFailedWrite()
+    {
+        var sync = new FakeClipboardSync();
+        var log = new CapturingLog<ClipboardMaster>();
+        var master = new ClipboardMaster(sync, log);
+        sync.RefusedFormats.Add(ClipboardFormat.Text);
+
+        var pull = master.Pull("a");
+        var taken = master.TakePullAnswer("a", new ClipboardPullResponseMessage(pull.PullId, ClipboardUtils.PlaceholderText));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(taken.Failed, Is.True);
+            var warnings = log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message).ToList();
+            Assert.That(warnings, Has.Some.Contains("could not be written"));
+            Assert.That(warnings, Has.None.Contains("concealed markers"));
         }
     }
 

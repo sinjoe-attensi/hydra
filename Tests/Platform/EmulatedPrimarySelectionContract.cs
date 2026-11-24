@@ -122,7 +122,7 @@ public abstract class EmulatedPrimarySelectionContract
         using (Assert.EnterMultipleScope())
         {
             Assert.That(Hydra.Clipboard.Read().AsContents().Text, Is.Null);
-            Assert.That(Hydra.Clipboard.StillHolds(written), Is.True);
+            Assert.That(Hydra.Clipboard.StillHolds(), Is.True);
         }
     }
 
@@ -135,7 +135,7 @@ public abstract class EmulatedPrimarySelectionContract
         using (Assert.EnterMultipleScope())
         {
             Assert.That(Hydra.Clipboard.Read().AsContents().Text, Is.EqualTo("written"));
-            Assert.That(Hydra.Clipboard.StillHolds(written), Is.False);
+            Assert.That(Hydra.Clipboard.StillHolds(), Is.False);
         }
     }
 
@@ -144,7 +144,7 @@ public abstract class EmulatedPrimarySelectionContract
     {
         OtherAppCopies("copied");
 
-        Assert.That(Hydra.Clipboard.StillHolds(null), Is.False);
+        Assert.That(Hydra.Clipboard.StillHolds(), Is.False);
     }
 
 
@@ -191,8 +191,8 @@ public abstract class EmulatedPrimarySelectionContract
         {
             Assert.That(_otherApp.Clipboard.Read().AsContents().Text, Is.EqualTo(ClipboardUtils.PlaceholderText));
             Assert.That(_otherApp.Clipboard.Read().AsContents().Png, Is.Null);
-            Assert.That(Hydra.Clipboard.StillHolds(cleared), Is.True);
-            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, cleared, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
+            Assert.That(Hydra.Clipboard.StillHolds(), Is.True);
+            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
             Assert.That(_otherApp.ReadSelection().TextOrNone(), Is.Not.EqualTo(ClipboardUtils.PlaceholderText), "the placeholder is never a text copy");
             Assert.That(Hydra.ReadSelection().TextOrNone(), Is.EqualTo("relayed selection"));
         }
@@ -208,8 +208,8 @@ public abstract class EmulatedPrimarySelectionContract
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
-            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
+            Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
         }
     }
 
@@ -238,7 +238,7 @@ public abstract class EmulatedPrimarySelectionContract
     public void ConcealedWrite_ReadsAsConcealedInAnotherApp()
     {
         Write(Snapshot("hunter2", null, null, Concealed: true));
-        var read = ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test");
+        var read = ClipboardUtils.ReadWithFallback(_otherApp, null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -256,7 +256,7 @@ public abstract class EmulatedPrimarySelectionContract
         using (Assert.EnterMultipleScope())
         {
             Assert.That(_otherApp.Clipboard.Read().AsContents().Secret, Is.False);
-            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, ClipboardChanges.Of(_otherApp.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
+            Assert.That(ClipboardUtils.ReadWithFallback(_otherApp, null, NullLogger.Instance, "test")!.Clipboard.Secret, Is.False);
         }
     }
 }

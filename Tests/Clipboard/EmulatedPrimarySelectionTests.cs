@@ -63,7 +63,7 @@ public class EmulatedPrimarySelectionTests
         public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
         {
             var write = os._writing;
-            return write(leftAt) ? ClipboardUtils.Written(contents, null) : new ClipboardWrite.NotReplaced("not replaced");
+            return write(leftAt) ? ClipboardUtils.Written(contents, contents, null) : new ClipboardWrite.NotReplaced("not replaced");
         }
 
         public ClipboardWrite Write(ClipboardContents contents) => Write(contents, _ => { });
@@ -131,7 +131,7 @@ public class EmulatedPrimarySelectionTests
         var last = new LastWrite(() => _version, NullLogger.Instance);
         Assert.That(last.Holds(), Is.False, "nothing written yet");
 
-        last.Write(left =>
+        last.Write(ClipboardContents.Empty, left =>
         {
             _version++;
             _text = "written";
@@ -149,7 +149,7 @@ public class EmulatedPrimarySelectionTests
     {
         // Windows reports no version when another app owns the clipboard after the write
         var last = new LastWrite(() => _version, NullLogger.Instance);
-        last.Write(_ =>
+        last.Write(ClipboardContents.Empty, _ =>
         {
             _version++;
             return ClipboardContents.Empty;
@@ -164,9 +164,9 @@ public class EmulatedPrimarySelectionTests
     public void Holds_AfterAFailedWriteThatReportedItsVersion()
     {
         var last = new LastWrite(() => _version, NullLogger.Instance);
-        last.Write(LeavingVersion, _ => { }, () => _version);
+        last.Write(ClipboardContents.Empty, LeavingVersion, _ => { }, () => _version);
 
-        var failed = last.Write(left =>
+        var failed = last.Write(ClipboardContents.Empty, left =>
         {
             LeavingVersion(left);
             return null;

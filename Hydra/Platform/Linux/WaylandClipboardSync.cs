@@ -90,11 +90,11 @@ internal sealed class WaylandClipboardSync : IClipboardPlatform, IClipboard, IDi
     }
 
     // whether wl-copy still serves Hydra's last write
-    public bool StillHolds(ClipboardWrite.Written? write) => OwnsClipboard();
+    public bool StillHolds() => OwnsClipboard();
 
-    public ClipboardWrite Write(ClipboardContents contents)
+    public ClipboardWrite Write(ClipboardContents asked)
     {
-        contents = ClipboardUtils.Writing(contents);
+        var contents = ClipboardUtils.Writing(asked);
         // the placeholder carries the hint too, so clipboard managers never keep it
         var sensitive = contents.Secret || ClipboardUtils.IsPlaceholder(contents);
         List<string> args = sensitive ? ["--sensitive"] : [];
@@ -128,7 +128,7 @@ internal sealed class WaylandClipboardSync : IClipboardPlatform, IClipboard, IDi
         else
         {
             // nothing for the clipboard, which Writing never leaves: leave it as it is
-            return ClipboardUtils.Written(contents, null);
+            return ClipboardUtils.Written(asked, contents, null);
         }
 
         // a failed copy leaves the old owner serving: the clipboard was not replaced, so it must not be emptied either
@@ -138,7 +138,7 @@ internal sealed class WaylandClipboardSync : IClipboardPlatform, IClipboard, IDi
             Stop(_clipboardOwner);
             _clipboardOwner = process;
         }
-        return ClipboardUtils.Written(written, null);
+        return ClipboardUtils.Written(asked, written, null);
     }
 
     private bool OwnsClipboard()

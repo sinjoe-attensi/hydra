@@ -73,7 +73,7 @@ public class WindowsClipboardSyncTests : EmulatedPrimarySelectionContract
             using (Assert.EnterMultipleScope())
             {
                 Assert.That(Hydra.Clipboard.Read(), Is.InstanceOf<ClipboardRead.Unreadable>(), "unknown, never empty or \"not concealed\"");
-                Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, ClipboardChanges.Of(Hydra.Clipboard).Last, NullLogger.Instance, "test"), Is.Null);
+                Assert.That(ClipboardUtils.ReadWithFallback(Hydra, null, NullLogger.Instance, "test"), Is.Null);
             }
         }
         finally

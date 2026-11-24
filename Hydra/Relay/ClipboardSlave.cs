@@ -54,7 +54,7 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
         master.AwaitingPush = null;
         master.EmptiedFor = null;
         var ours = Ours();
-        if (hash.Cleared == true) ClearConcealed(host, ours);
+        if (hash.Cleared == true) ClearSecret(host, ours);
         if (hash.Pending == true)
         {
             // a copy the master never took is newer than the clipboard on its way, so it is kept for the resend
@@ -123,40 +123,41 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
         var selectionFor = master.SelectionPushFor;
         master.SelectionPushFor = null;
         // host's clipboard replaces what this host last answered it with
-        master.AnsweredConcealed = false;
+        master.AnsweredSecret = false;
         var applied = _changes.Write(() => ClipboardWire.ApplyPush(platform, push, selectionFor, log, host), a => a?.Written);
-        if (applied is Applied.Emptied)
+        // the placeholder alone, in place of a secret copy whose markers were refused or as the copy itself: an empty
+        // clipboard, Hydra's own, both taken as refused markers
+        if (applied is Applied.MarkersRefused or Applied.Cleared)
         {
-            // the placeholder in place of a concealed copy whose markers were refused: an empty clipboard, Hydra's own
             _echo.Forget();
             Wrote();
             master.SyncedWith = null;
             master.SyncedBy = null;
-            master.ConcealedFrom = null;
+            master.SecretFrom = null;
             log.LogWarning("Clipboard push from {Host}: the clipboard refused its concealed markers, so it was not written; the clipboard stays empty", host);
             return true;
         }
         var failed = applied is Applied.Failed;
         if (failed) log.LogWarning("Clipboard push from {Host}: it could not be written", host);
-        if (applied is not Applied.Copy { Write.Taken: var taken }) return failed;
+        if (applied is not Applied.Copy { Written.Taken: var taken }) return failed;
         _echo.Remember(taken);
         Wrote();
         master.SyncedWith = ClipboardUtils.ClipboardHash(taken);
         master.SyncedBy = null;
         master.SyncedAt = _changes.Now();
-        master.ConcealedFrom = taken.Secret ? master.SyncedWith : null;
+        master.SecretFrom = taken.Secret ? master.SyncedWith : null;
         return false;
     }
 
-    // the master's concealed copy was cleared at its source: so is that copy here, while the clipboard is still Hydra's write
+    // the master's secret copy was cleared at its source: so is that copy here, while the clipboard is still Hydra's write
     // of it, never a copy made since
-    private void ClearConcealed(string host, bool ours)
+    private void ClearSecret(string host, bool ours)
     {
         var master = For(host);
-        var concealed = master.ConcealedFrom;
-        master.ConcealedFrom = null;
-        if (concealed == null || !ours) return;
-        if (_echo.Read("cleared hash") is not { Clipboard: { IsEmpty: false } local } || ClipboardUtils.ClipboardHash(local) != concealed) return;
+        var secret = master.SecretFrom;
+        master.SecretFrom = null;
+        if (secret == null || !ours) return;
+        if (_echo.Read("cleared hash") is not { Clipboard: { IsEmpty: false } local } || ClipboardUtils.ClipboardHash(local) != secret) return;
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard hash from {Host}: its concealed copy was cleared, clearing it here", host);
         Empty();
@@ -232,11 +233,11 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
     }
 
     // empties the clipboard, which stays Hydra's own write, so a read finds nothing rather than the last push; whether it did.
-    // no password manager cleared it, so no master is told its concealed copy was
+    // no password manager cleared it, so no master is told its secret copy was
     public bool Empty()
     {
         Wrote();
-        foreach (var master in _masters.Values) master.AnsweredConcealed = false;
+        foreach (var master in _masters.Values) master.AnsweredSecret = false;
         return _changes.Write(_echo.Empty) != null;
     }
 
@@ -332,13 +333,13 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
         return answer;
     }
 
-    // a full answer: an empty clipboard where the last one this host answered master with was concealed was cleared here
+    // a full answer: an empty clipboard where the last one this host answered master with was secret was cleared here
     // since (its password manager), which master is told once, so its copy of it is cleared too
     private static ClipboardPullResponseMessage TellCleared(ClipboardPullResponseMessage answer, ClipboardSnapshot local, PerMaster master)
     {
-        var concealed = master.AnsweredConcealed;
-        master.AnsweredConcealed = local.Clipboard is { IsEmpty: false, Secret: true };
-        return local.Clipboard.IsEmpty && concealed ? answer with { Cleared = true } : answer;
+        var secret = master.AnsweredSecret;
+        master.AnsweredSecret = local.Clipboard is { IsEmpty: false, Secret: true };
+        return local.Clipboard.IsEmpty && secret ? answer with { Cleared = true } : answer;
     }
 
     // host's master, added when it has none
@@ -373,10 +374,10 @@ public sealed class ClipboardSlave(IClipboardPlatform platform, ILogger log, Fun
         public ClipboardBaseline? SelectionPushFor { get; set; }
         // the selection taken while its stream was pending, which that stream's own must not overwrite
         public IClipboardSelection? SelectionSince { get; set; }
-        // the hash of the concealed copy last applied from it, which its Cleared hash clears while still Hydra's write
-        public ulong? ConcealedFrom { get; set; }
-        // whether it was last answered with a concealed copy of this host's, told once that it was cleared here since
-        public bool AnsweredConcealed { get; set; }
+        // the hash of the secret copy last applied from it, which its Cleared hash clears while still Hydra's write
+        public ulong? SecretFrom { get; set; }
+        // whether it was last answered with a secret copy of this host's, told once that it was cleared here since
+        public bool AnsweredSecret { get; set; }
         // its hash emptied the clipboard here for a push still to come, and when
         public AwaitedPush? AwaitingPush { get; set; }
         public ChangePoint? EmptiedFor { get; set; }

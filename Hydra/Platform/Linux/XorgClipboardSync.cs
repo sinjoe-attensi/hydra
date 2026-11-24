@@ -248,7 +248,7 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
     }
 
     // whether CLIPBOARD is still Hydra's, whichever write was last: SelectionClear forgets it once another client takes it
-    public bool StillHolds(ClipboardWrite.Written? write)
+    public bool StillHolds()
     {
         lock (_dataLock)
             return _ownedClipboard != null;
@@ -293,7 +293,7 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
         // the contents are the authoritative new clipboard — replace all owned representations
         var writing = ClipboardUtils.Writing(contents);
         Own(_atomClipboard, () => _ownedClipboard = writing);
-        return ClipboardUtils.Written(writing, WroteAt());
+        return ClipboardUtils.Written(contents, writing, WroteAt());
     }
 
     private void Own(nint selection, Action setData)

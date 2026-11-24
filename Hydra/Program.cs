@@ -421,7 +421,8 @@ if (config != null)
         }
     services.AddSingleton(clipboard);
 
-    // the platform, kept and disposed by the container, as Hydra uses it: with an emulated primary selection where it has none
+    // the platform, kept and disposed once by the container as T, as Hydra uses it: with an emulated primary selection where
+    // it has none, composed into a view the container does not dispose again
     static Func<IServiceProvider, IClipboardPlatform> ClipboardOf<T>(IServiceCollection services) where T : class, IClipboardPlatform
     {
         services.AddSingleton<T>();

@@ -12,7 +12,7 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
 
     // the clipboard, or null when it could not be read, which is unknown, never empty
     public ClipboardSnapshot? Read(string context) =>
-        ClipboardUtils.ReadWithFallback(platform, Volatile.Read(ref _last), _changes.Last, log, context);
+        ClipboardUtils.ReadWithFallback(platform, Volatile.Read(ref _last), log, context);
 
     // what a peer's clipboard is compared against; null when the clipboard could not be read
     public ClipboardBaseline? Baseline(string context) => Read(context) is { } read ? ClipboardBaseline.Of(read) : null;
@@ -20,7 +20,7 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
     // a peer's copy written here, as the clipboard took it
     public void Remember(ClipboardContents taken) => Volatile.Write(ref _last, taken);
 
-    // the clipboard was emptied another way, as by the placeholder written in place of a refused concealed copy
+    // the clipboard was emptied another way, as by the placeholder written in place of a refused secret copy
     public void Forget() => Volatile.Write(ref _last, null);
 
     // empties the clipboard, which stays Hydra's own write, so a read finds it empty, not what was last taken; the clear,

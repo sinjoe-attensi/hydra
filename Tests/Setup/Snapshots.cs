@@ -9,5 +9,5 @@ public static class Snapshots
         new(new ClipboardContents(text, Html, Rtf, image, Concealed), selection);
 
     // the text of the copy written, null for anything else applied
-    public static string? CopyText(this Applied? applied) => (applied as Applied.Copy)?.Write.Taken.Text;
+    public static string? CopyText(this Applied? applied) => (applied as Applied.Copy)?.Written.Taken.Text;
 }

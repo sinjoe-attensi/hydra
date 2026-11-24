@@ -29,18 +29,18 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     private ulong _wrote = EmptyHash;
     // whether the last clipboard read or applied here was a password manager's copy, so an empty one since was cleared at
     // its source, which the slaves are told on entry
-    private bool _concealed;
+    private bool _secret;
     // bumped by every apply or clear, so a read begun before one never writes its older state over it
     private int _version;
     // told of each pull sent and when it settles; null for a clipboard that serves no paste on request, which tracks none
-    private readonly IPullObserver? _observer = platform as IPullObserver;
+    private readonly IPullObserver? _observer = platform.Clipboard as IPullObserver;
     // writes under way (TakePullAnswer, LandHeld, ForgetPull): a pull they took is settled only once they are done; under _lock
     private int _writing;
     // the pulls sent whose Settled has not completed, under _lock
     private readonly List<PendingPull> _unsettled = [];
 
     // for tests: what to offer a slave on entering it; null for nothing, as for a clipboard that could not be read. An
-    // empty one after a concealed copy says so, for a slave still holding Hydra's write of that copy to clear it
+    // empty one after a secret copy says so, for a slave still holding Hydra's write of that copy to clear it
     public ClipboardHashMessage? Hash() => Hash(null);
 
     // as Hash(), offered to host: carrying its ResendFrom as of the same clipboard, both taken while no apply or clear
@@ -57,7 +57,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             {
                 var settled = read.Version == _version;
                 if (read.Clip is not { } clip) hash = null;
-                else if (clip.Clipboard.IsEmpty && _concealed) hash = ClipboardWire.ToHash(clip) with { Cleared = true };
+                else if (clip.Clipboard.IsEmpty && _secret) hash = ClipboardWire.ToHash(clip) with { Cleared = true };
                 else hash = clip.IsEmpty ? null : ClipboardWire.ToHash(clip);
                 if (hash != null && host != null) hash = hash with { ResendFrom = ResendFromLocked(host, now) };
                 if (settled) break;
@@ -70,7 +70,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     public ClipboardPushMessage? Push() => Read("push") is { IsEmpty: false } clip ? ClipboardWire.ToPush(clip) : null;
 
     // empties the clipboard, which stays Hydra's own write, so a read finds nothing rather than the last fallback; whether
-    // it did. cleared: a password manager cleared the concealed copy it held, which the slaves are told on entry
+    // it did. cleared: a password manager cleared the secret copy it held, which the slaves are told on entry
     public bool Empty(bool cleared = false) => Clear(cleared) != null;
 
     // Empty: the clear, where it replaced the clipboard
@@ -81,7 +81,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         {
             _version++;
             _known = ClipboardBaseline.Of(ClipboardSnapshot.Empty);
-            _concealed = cleared;
+            _secret = cleared;
             if (emptied != null) _wrote = EmptyHash;
         }
         return emptied;
@@ -525,11 +525,13 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
     // writes host's answer to pull, superseding the older pulls when it changed the clipboard; gone: those it already did
     private PullAnswer Apply(string host, PendingPull pull, ClipboardPullResponseMessage answer, List<OutstandingPull> gone)
     {
-        var cleared = answer.Cleared == true ? ClearConcealed(host) : null;
+        var cleared = answer.Cleared == true ? ClearSecret(host) : null;
         var applied = _changes.Write(() => ClipboardWire.TakePullAnswer(platform, answer, pull.Against, log, host), a => a?.Written);
-        // the placeholder in place of a concealed copy whose markers were refused is an empty clipboard, Hydra's own
-        if (applied is Applied.Emptied) _echo.Forget();
-        else if (applied is Applied.Copy written) _echo.Remember(written.Write.Taken);
+        // the placeholder alone, in place of a secret copy whose markers were refused or as the copy itself, is an empty
+        // clipboard, Hydra's own: both are taken as refused markers
+        var refused = applied is Applied.MarkersRefused or Applied.Cleared;
+        if (refused) _echo.Forget();
+        else if (applied is Applied.Copy written) _echo.Remember(written.Written.Taken);
         var failed = applied is Applied.Failed;
         // what it applied after all: a failed write leaves only the selection set after it
         var offered = applied is Applied.Failed { Kept: var kept } ? kept : applied;
@@ -541,20 +543,25 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             if (offered != null) _version++;
             switch (offered)
             {
-                case Applied.Emptied emptied:
-                    _known = ClipboardBaseline.Of(emptied.Known);
-                    _concealed = false;
-                    // a clear asked for is Hydra's write of what the peer sent, unless the clear of its concealed copy came first
-                    _wrote = cleared == null ? ClipboardUtils.ClipboardHash(emptied.Known.Clipboard) : EmptyHash;
+                case Applied.MarkersRefused markers:
+                    _known = ClipboardBaseline.Of(ClipboardSnapshot.Empty with { Selection = markers.Kept?.Text });
+                    _secret = false;
+                    _wrote = EmptyHash;
+                    break;
+                case Applied.Cleared placeholder:
+                    _known = ClipboardBaseline.Of(new ClipboardSnapshot(placeholder.Written.Taken, placeholder.Selection));
+                    // the peer's placeholder is Hydra's write as it took it, unless the clear of its secret copy came first
+                    _secret = cleared == null && placeholder.Written.Taken.Secret;
+                    _wrote = cleared == null ? ClipboardUtils.ClipboardHash(placeholder.Written.Taken) : EmptyHash;
                     break;
                 case Applied.SelectionAlone alone:
                     _known = _known with { Selection = alone.Text };
                     break;
                 case Applied.Copy copy:
-                    _known = ClipboardBaseline.Of(new ClipboardSnapshot(copy.Write.Taken, copy.Selection));
+                    _known = ClipboardBaseline.Of(new ClipboardSnapshot(copy.Written.Taken, copy.Selection));
                     if (cleared != null) break;
-                    _concealed = copy.Write.Taken.Secret;
-                    _wrote = ClipboardUtils.ClipboardHash(copy.Write.Taken);
+                    _secret = copy.Written.Taken.Secret;
+                    _wrote = ClipboardUtils.ClipboardHash(copy.Written.Taken);
                     break;
             }
             // a changed answer written is taken, and with it every answer from host before it; one that could not be is
@@ -564,7 +571,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
                 _untaken[host] = standing with { Known = _known.Hash };
             else _untaken.Remove(host);
         }
-        if (applied is Applied.Emptied)
+        if (refused)
         {
             log.LogWarning("Clipboard pull response from {Host}: the clipboard refused its concealed markers, so it was not written; the clipboard stays empty",
                 host);
@@ -574,7 +581,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
             log.LogWarning("Clipboard pull response from {Host}: it could not be written; the clipboard stays as it was", host);
         // the clear is the newer state: it supersedes the older pulls and aborts the pushes of the old copy, as a copy does
         if (cleared != null)
-            return new PullAnswer(true, new Applied.Emptied(cleared, ClipboardSnapshot.Empty), [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
+            return new PullAnswer(true, new Applied.Cleared(cleared, null), [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
         // a changed answer that could not be written is still the newest copy, asked again: no older one lands over it
         if (failed && answer.Unchanged != true)
             return new PullAnswer(true, offered, [.. gone, .. Supersede(pull.Ref, answer.Resends)], Failed: true);
@@ -582,9 +589,9 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         return new PullAnswer(true, offered, [.. gone, .. Supersede(pull.Ref, answer.Resends)]);
     }
 
-    // host's concealed copy was cleared at its source: so is the master's clipboard, while it holds a concealed copy. The
+    // host's secret copy was cleared at its source: so is the master's clipboard, while it holds a secret copy. The
     // clear, where it replaced the clipboard
-    private ClipboardWrite.Written? ClearConcealed(string host)
+    private ClipboardWrite.Written? ClearSecret(string host)
     {
         if (Read("pull response") is not { Clipboard: { IsEmpty: false, Secret: true } }) return null;
         if (log.IsEnabled(LogLevel.Debug))
@@ -650,7 +657,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         return superseded;
     }
 
-    // the clipboard, kept as the one known and noting whether it holds a concealed copy, unless an apply or clear came
+    // the clipboard, kept as the one known and noting whether it holds a secret copy, unless an apply or clear came
     // since the read began, which is newer than what it found; null when it could not be read
     private ClipboardSnapshot? Read(string context) => ReadAt(context).Clip;
 
@@ -665,7 +672,7 @@ public sealed class ClipboardMaster(IClipboardPlatform platform, ILogger log)
         {
             if (version != _version) return new VersionedRead(clip, version);
             _known = ClipboardBaseline.Of(clip);
-            if (!clip.Clipboard.IsEmpty) _concealed = clip.Clipboard.Secret;
+            if (!clip.Clipboard.IsEmpty) _secret = clip.Clipboard.Secret;
         }
         return new VersionedRead(clip, version);
     }

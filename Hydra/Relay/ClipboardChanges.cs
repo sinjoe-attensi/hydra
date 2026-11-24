@@ -57,7 +57,7 @@ public sealed class ClipboardChanges
     }
 
     // whether the clipboard still holds Hydra's last write here (IClipboard.StillHolds)
-    public bool StillHolds() => _clipboard.StillHolds(Last);
+    public bool StillHolds() => _clipboard.StillHolds();
 
     // whether the clipboard's version is still the one Hydra's last write here left, nothing copied since: never, before
     // Hydra wrote here; StillHolds where the platform keeps no counter

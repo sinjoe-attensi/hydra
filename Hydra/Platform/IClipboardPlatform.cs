@@ -37,11 +37,12 @@ public interface IClipboard
     ClipboardRead Read();
 
     // atomically clears and writes the given contents and says what it took: the contents less any format the clipboard
-    // refused. Empty contents are a clear: the placeholder, which Hydra reads as empty and never as concealed, marked
+    // refused. Empty contents are a clear: the placeholder, which Hydra reads as empty and never as secret, marked
     // no-history/no-cloud where the platform has such markers (kept out of clipboard history and cloud sync, yet left
-    // for clipboard managers to see), taken as Empty. A concealed copy's markers are written before its content, so no
+    // for clipboard managers to see), taken as Empty. A secret copy's markers are written before its content, so no
     // clipboard manager or monitor sees the content without them; a copy whose markers were refused is never written
-    // unprotected, the placeholder going in its place, taken as Empty, and NotReplaced when the placeholder was refused too
+    // unprotected, the placeholder going in its place, which is what it took. Contents that are the placeholder alone
+    // are written as they are
     ClipboardWrite Write(ClipboardContents contents);
 
     // copied files, which Hydra leaves as they are
@@ -54,11 +55,10 @@ public interface IClipboard
     ClipboardVersion? Version => null;
 
     // whether nothing has replaced Hydra's last write here since, so a read that finds no format (its echo suppressed)
-    // can still mean it. write must be that last write as the relay recorded it (ClipboardChanges.Last; null before
-    // any), never an older one: no platform answers per write. Each answers from its own record of its last write: the
-    // version that write reported, a failed write's too (Windows, macOS, the portal), or whether Hydra still owns the
-    // clipboard (X11, wl-clipboard); one that tracks neither answers true
-    bool StillHolds(ClipboardWrite.Written? write) => true;
+    // can still mean it: the clipboard is still at the version that write reported, a failed write's too (Windows, macOS,
+    // the portal), or Hydra still owns it (X11, wl-clipboard); false before any write there. A clipboard that tracks
+    // neither answers true
+    bool StillHolds() => true;
 }
 
 // the primary selection: what was last selected, apart from the clipboard
@@ -72,7 +72,7 @@ public interface IPrimarySelection
 
 // A clipboard with no primary selection of its own, whose text copies EmulatedPrimarySelection keeps as one. Counter is
 // Version as the OS keeps it, never null, which only grows; ReadTextCopy reads the text of a text copy: none for one whose
-// text only names an image or files we send instead, or for a password manager's concealed copy; unreadable when the
+// text only names an image or files we send instead, or for a password manager's secret copy; unreadable when the
 // clipboard cannot be read, to be tried again. These members may throw: only EmulatedPrimarySelection calls them, and it
 // catches
 public interface ISelectionlessClipboard : IClipboard
@@ -96,10 +96,12 @@ internal interface IWritesBesideSelection
 public sealed record ClipboardPlatform(IClipboard Clipboard, IPrimarySelection? PrimarySelection) : IClipboardPlatform
 {
     // the platform as Hydra uses it, the one place this is decided: one without a primary selection of its own keeps an
-    // emulated one, which every write goes through
+    // emulated one, which every write goes through. Never the platform object itself, so whoever owns that disposes it
+    // once (a container disposes each disposable a factory hands out)
     public static IClipboardPlatform Compose(IClipboardPlatform platform, ILogger log)
     {
-        if (platform.PrimarySelection != null || platform.Clipboard is not ISelectionlessClipboard selectionless) return platform;
+        if (platform.PrimarySelection != null || platform.Clipboard is not ISelectionlessClipboard selectionless)
+            return new ClipboardPlatform(platform.Clipboard, platform.PrimarySelection);
         var emulated = new EmulatedPrimarySelection(selectionless, log);
         return new ClipboardPlatform(emulated.Clipboard, emulated);
     }

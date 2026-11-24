@@ -248,7 +248,7 @@ public class XorgClipboardSyncTests
         owner.SetClipboard(Snapshot("hunter2", null, null, Concealed: true));
         XclipRead("UTF8_STRING"); // barrier, as in RoundTrip_HtmlAndText_BetweenInstances
 
-        var read = ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test");
+        var read = ClipboardUtils.ReadWithFallback(reader, null, NullLogger.Instance, "test");
 
         using (Assert.EnterMultipleScope())
         {
@@ -367,7 +367,7 @@ public class XorgClipboardSyncTests
     {
         using var owner = new XorgClipboardSync();
         var ours = owner.Written(Snapshot("ours", null, null));
-        Assert.That(owner.StillHolds(ours), Is.True);
+        Assert.That(owner.StillHolds(), Is.True);
 
         XclipWrite("UTF8_STRING", Encoding.UTF8.GetBytes("theirs"));
 
@@ -375,7 +375,7 @@ public class XorgClipboardSyncTests
     }
 
     // SelectionClear reaches the owner's event thread on its own time
-    private static bool LosesOwnership(XorgClipboardSync owner, ClipboardWrite.Written write) => SpinWait.SpinUntil(() => !owner.StillHolds(write), Bound);
+    private static bool LosesOwnership(XorgClipboardSync owner, ClipboardWrite.Written write) => SpinWait.SpinUntil(() => !owner.StillHolds(), Bound);
 
     [Test]
     public void Version_MovesOnAWriteAndOnAnotherClientsCopy()
@@ -547,7 +547,7 @@ public class XorgClipboardSyncTests
             Assert.That(targets, Does.Contain("UTF8_STRING"));
             Assert.That(targets, Does.Contain("x-kde-passwordManagerHint"), "so Klipper never keeps the placeholder");
             Assert.That(XclipRead("x-kde-passwordManagerHint"), Is.EqualTo("secret"u8.ToArray()));
-            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, ClipboardChanges.Of(owner.Clipboard).Last, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
+            Assert.That(ClipboardUtils.ReadWithFallback(owner, null, NullLogger.Instance, "test")!.Clipboard.IsEmpty, Is.True);
             Assert.That(XclipRead("UTF8_STRING", "primary"), Is.EqualTo(Encoding.UTF8.GetBytes("selected")));
         }
     }
@@ -563,7 +563,7 @@ public class XorgClipboardSyncTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(reader.Read().AsContents().Text, Is.EqualTo(ClipboardUtils.PlaceholderText));
-            Assert.That(ClipboardUtils.ReadWithFallback(reader, null, ClipboardChanges.Of(reader.Clipboard).Last, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
+            Assert.That(ClipboardUtils.ReadWithFallback(reader, null, NullLogger.Instance, "test"), Is.EqualTo(ClipboardSnapshot.Empty));
         }
     }
 

@@ -164,11 +164,11 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
         }
     }
 
-    public ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt)
+    public ClipboardWrite Write(ClipboardContents asked, Action<long> leftAt)
     {
         using var pool = new ObjcAutoreleasePool();
-        contents = ClipboardUtils.Writing(contents);
-        return _lastWrite.Write(left =>
+        var contents = ClipboardUtils.Writing(asked);
+        return _lastWrite.Write(asked, left =>
         {
             var pasteboard = GetGeneralPasteboard();
             if (pasteboard == nint.Zero) return null;
@@ -180,11 +180,11 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
                 () => WriteData(pasteboard, [], PasteboardTypeTransient));
             _echo.Track(marked);
             // the clear replaced it
-            return ClipboardUtils.Took(contents, ClipboardUtils.WriteAll(_log, marked,
+            return ClipboardUtils.WriteAll(_log, marked,
                 marked.Text is { } text ? new FormatWrite(ClipboardFormat.Text, () => WriteString(pasteboard, text, PasteboardTypeString)) : null,
                 marked.Html is { } html ? new FormatWrite(ClipboardFormat.Html, () => WriteString(pasteboard, html, PasteboardTypeHtml)) : null,
                 marked.Rtf is { } rtf ? new FormatWrite(ClipboardFormat.Rtf, () => WriteData(pasteboard, rtf, PasteboardTypeRtf)) : null,
-                marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null));
+                marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null);
         }, leftAt, () => Version?.Value);
     }
 
@@ -225,7 +225,7 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
     }
 
     // by the version Hydra's last write reported, whichever write that was
-    public bool StillHolds(ClipboardWrite.Written? write)
+    public bool StillHolds()
     {
         using var pool = new ObjcAutoreleasePool();
         return _lastWrite.Holds();
