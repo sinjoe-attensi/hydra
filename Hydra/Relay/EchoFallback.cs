@@ -49,7 +49,7 @@ public sealed class EchoFallback(IClipboardPlatform platform, ILogger log)
     // it said was coming
     public BeginDecision Rejected(string host, Func<BeginDecision> begun)
     {
-        if (_changes.StillOwnWrite()) return begun();
+        if (_changes.VersionIsLastWrite()) return begun();
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug("Clipboard stream from {Host} rejected: the clipboard is not Hydra's write, keeping it", host);
         return BeginDecision.Keep;

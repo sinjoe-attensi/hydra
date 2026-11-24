@@ -162,7 +162,7 @@ public sealed class SimulatedClipboard : IClipboardPlatform
             new ClipboardRead.Contents(new ClipboardContents(os._owned ? null : os._text, null, null, os._owned ? null : os.ImagePng, os.Concealed));
 
         // whether Hydra's last write still owns it, whichever write that was
-        public bool StillHolds(ClipboardWrite.Written write) => os._owned;
+        public bool StillHolds(ClipboardWrite.Written? write) => os._owned;
 
         // every copy and every one of Hydra's writes moves it, as the OS counter (X11: Hydra's owner-change counter) does
         public ClipboardVersion? Version => new ClipboardVersion(os._version);

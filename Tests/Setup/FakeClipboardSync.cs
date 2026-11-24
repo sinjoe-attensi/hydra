@@ -91,7 +91,7 @@ public sealed class FakeClipboardSync : IClipboardPlatform, IClipboard, IPrimary
 
     public bool HoldsFiles() => HasFileClipboardValue;
 
-    public bool StillHolds(ClipboardWrite.Written write) => StillHoldsValue;
+    public bool StillHolds(ClipboardWrite.Written? write) => StillHoldsValue;
 
     public ClipboardVersion? Version
     {

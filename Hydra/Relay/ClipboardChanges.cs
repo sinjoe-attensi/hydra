@@ -10,28 +10,35 @@ public sealed class ClipboardChanges
 {
     private static readonly ConditionalWeakTable<IClipboard, ClipboardChanges> All = [];
 
-    // Hydra's last write before it wrote here: one at no version, which no platform that tracks versions or ownership
-    // holds, and one that tracks neither always does, as it answered before Hydra's first write
-    public static readonly ClipboardWrite.Written NothingWritten = new(ClipboardContents.Empty, null);
-
     private readonly IClipboard _clipboard;
-    private ClipboardWrite.Written _last = NothingWritten;
+    private readonly Lock _lock = new();
+    private ClipboardWrite.Written? _last;
 
     private ClipboardChanges(IClipboard clipboard) => _clipboard = clipboard;
 
     public static ClipboardChanges Of(IClipboard clipboard) => All.GetValue(clipboard, c => new ClipboardChanges(c));
 
-    // Hydra's last write here that replaced the clipboard; NothingWritten before any
-    public ClipboardWrite.Written Last => Volatile.Read(ref _last);
+    // Hydra's last write here that replaced the clipboard; null before any
+    public ClipboardWrite.Written? Last
+    {
+        get
+        {
+            lock (_lock) return _last;
+        }
+    }
 
     public ClipboardVersion? Now() => _clipboard.Version;
 
     // Hydra's own write, kept as the last only when took finds it replaced the clipboard, at the version the write reported,
-    // so a failed write, a selection alone, or a copy landing during the write is never taken for Hydra's own
+    // so a failed write, a selection alone, or a copy landing during the write is never taken for Hydra's own. Master and
+    // slave write apart, so a write kept late never replaces a later one: the version only grows
     public T Write<T>(Func<T> write, Func<T, ClipboardWrite.Written?> took)
     {
         var result = write();
-        if (took(result) is { } written) Volatile.Write(ref _last, written);
+        if (took(result) is { } written)
+            lock (_lock)
+                if (_last?.At is not { } last || written.At is not { } at || at.Value >= last.Value)
+                    _last = written;
         return result;
     }
 
@@ -46,13 +53,13 @@ public sealed class ClipboardChanges
     public bool? CopiedSince(ClipboardVersion? at, ClipboardVersion? now)
     {
         if (at == null || now == null) return null;
-        return now != at && now != Last.At;
+        return now != at && now != Last?.At;
     }
 
     // whether the clipboard still holds Hydra's last write here (IClipboard.StillHolds)
     public bool StillHolds() => _clipboard.StillHolds(Last);
 
-    // whether the clipboard is still Hydra's own last write by the version, nothing copied since: never, before Hydra wrote
-    // here; StillHolds where the platform keeps no counter
-    public bool StillOwnWrite() => _clipboard.Version is { } now ? Last.At == now : StillHolds();
+    // whether the clipboard's version is still the one Hydra's last write here left, nothing copied since: never, before
+    // Hydra wrote here; StillHolds where the platform keeps no counter
+    public bool VersionIsLastWrite() => _clipboard.Version is { } now ? Last?.At == now : StillHolds();
 }

@@ -180,11 +180,11 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
                 () => WriteData(pasteboard, [], PasteboardTypeTransient));
             _echo.Track(marked);
             // the clear replaced it
-            return ClipboardUtils.WriteAll(_log, marked,
+            return ClipboardUtils.Took(contents, ClipboardUtils.WriteAll(_log, marked,
                 marked.Text is { } text ? new FormatWrite(ClipboardFormat.Text, () => WriteString(pasteboard, text, PasteboardTypeString)) : null,
                 marked.Html is { } html ? new FormatWrite(ClipboardFormat.Html, () => WriteString(pasteboard, html, PasteboardTypeHtml)) : null,
                 marked.Rtf is { } rtf ? new FormatWrite(ClipboardFormat.Rtf, () => WriteData(pasteboard, rtf, PasteboardTypeRtf)) : null,
-                marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null);
+                marked.Png is { } png ? new FormatWrite(ClipboardFormat.Image, () => WriteData(pasteboard, png, PasteboardTypePng)) : null));
         }, leftAt, () => Version?.Value);
     }
 
@@ -224,10 +224,11 @@ public sealed class MacClipboardSync : IClipboardPlatform, ISelectionlessClipboa
         }
     }
 
-    public bool StillHolds(ClipboardWrite.Written write)
+    // by the version Hydra's last write reported, whichever write that was
+    public bool StillHolds(ClipboardWrite.Written? write)
     {
         using var pool = new ObjcAutoreleasePool();
-        return _lastWrite.Holds(write);
+        return _lastWrite.Holds();
     }
 
     // setString:forType: and setData:forType: answer whether the pasteboard took it, as a BOOL: only its low byte is set

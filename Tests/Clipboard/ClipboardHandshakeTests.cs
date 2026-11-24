@@ -1732,8 +1732,25 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(changes.CopiedSince(at), Is.True);
-            Assert.That(changes.StillOwnWrite(), Is.False);
+            Assert.That(changes.VersionIsLastWrite(), Is.False);
         }
+    }
+
+    // master and slave write apart: a write kept after a later one returned never replaces it
+    [Test]
+    public void ChangesWrite_KeptLate_NeverReplacesALaterWrite()
+    {
+        var changes = ClipboardChanges.Of(new FakeClipboardSync());
+        var earlier = new ClipboardWrite.Written(new ClipboardContents("a", null, null, null, false), new ClipboardVersion(5));
+        var later = new ClipboardWrite.Written(new ClipboardContents("b", null, null, null, false), new ClipboardVersion(7));
+
+        changes.Write(() =>
+        {
+            changes.Write(() => (ClipboardWrite)later);
+            return earlier;
+        });
+
+        Assert.That(changes.Last, Is.SameAs(later));
     }
 
     [Test]
@@ -1761,7 +1778,7 @@ public class ClipboardHandshakeTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(changes.CopiedSince(at), Is.False);
-            Assert.That(changes.StillOwnWrite(), Is.True);
+            Assert.That(changes.VersionIsLastWrite(), Is.True);
         }
     }
 

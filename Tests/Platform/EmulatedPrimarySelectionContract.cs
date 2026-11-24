@@ -144,7 +144,7 @@ public abstract class EmulatedPrimarySelectionContract
     {
         OtherAppCopies("copied");
 
-        Assert.That(Hydra.Clipboard.StillHolds(new ClipboardWrite.Written(ClipboardContents.Empty, null)), Is.False);
+        Assert.That(Hydra.Clipboard.StillHolds(null), Is.False);
     }
 
 

@@ -22,13 +22,14 @@ public interface IClipboardPlatform
 {
     IClipboard Clipboard { get; }
 
-    // X11's PRIMARY or Wayland's primary selection; null where the OS has none (macOS, Windows), where Hydra
-    // keeps an EmulatedPrimarySelection in its place (ClipboardPlatform.Compose), and where none is kept at all
+    // X11's PRIMARY or Wayland's primary selection; null on a platform without one of its own (the raw macOS and
+    // Windows platforms, NullClipboardSync). ClipboardPlatform.Compose puts an EmulatedPrimarySelection in place of the
+    // null for a selectionless clipboard, so Hydra sees one there
     IPrimarySelection? PrimarySelection { get; }
 }
 
-// no read or write throws: a clipboard that could not be read answers Unreadable, never empty, and one that could not be
-// written NotReplaced
+// no member throws: a clipboard that could not be read answers Unreadable, never empty, and one that could not be
+// written NotReplaced. ISelectionlessClipboard's own members are the exception
 public interface IClipboard
 {
     // every format (HTML portable, without Windows' CF_HTML wrapper) and whether it carries a password manager's
@@ -40,7 +41,7 @@ public interface IClipboard
     // no-history/no-cloud where the platform has such markers (kept out of clipboard history and cloud sync, yet left
     // for clipboard managers to see), taken as Empty. A concealed copy's markers are written before its content, so no
     // clipboard manager or monitor sees the content without them; a copy whose markers were refused is never written
-    // unprotected, the placeholder going in its place, taken as Empty
+    // unprotected, the placeholder going in its place, taken as Empty, and NotReplaced when the placeholder was refused too
     ClipboardWrite Write(ClipboardContents contents);
 
     // copied files, which Hydra leaves as they are
@@ -52,11 +53,12 @@ public interface IClipboard
     // a write of Hydra's left travels in its Written.At
     ClipboardVersion? Version => null;
 
-    // whether nothing has replaced write, one of Hydra's own, since: no copy and no other write of Hydra's, so a read that
-    // finds no format (its echo suppressed) can still mean it. A platform that tracks who owns the clipboard rather than
-    // its version answers whether Hydra still owns it, whichever of its writes was last; one that tracks neither, true.
-    // A write at no version stands for none yet: false wherever versions or ownership are tracked
-    bool StillHolds(ClipboardWrite.Written write) => true;
+    // whether nothing has replaced Hydra's last write here since, so a read that finds no format (its echo suppressed)
+    // can still mean it. write must be that last write as the relay recorded it (ClipboardChanges.Last; null before
+    // any), never an older one: no platform answers per write. Each answers from its own record of its last write: the
+    // version that write reported, a failed write's too (Windows, macOS, the portal), or whether Hydra still owns the
+    // clipboard (X11, wl-clipboard); one that tracks neither answers true
+    bool StillHolds(ClipboardWrite.Written? write) => true;
 }
 
 // the primary selection: what was last selected, apart from the clipboard
@@ -71,16 +73,24 @@ public interface IPrimarySelection
 // A clipboard with no primary selection of its own, whose text copies EmulatedPrimarySelection keeps as one. Counter is
 // Version as the OS keeps it, never null, which only grows; ReadTextCopy reads the text of a text copy: none for one whose
 // text only names an image or files we send instead, or for a password manager's concealed copy; unreadable when the
-// clipboard cannot be read, to be tried again
+// clipboard cannot be read, to be tried again. These members may throw: only EmulatedPrimarySelection calls them, and it
+// catches
 public interface ISelectionlessClipboard : IClipboard
 {
     long Counter();
 
     SelectionRead ReadTextCopy();
 
-    // Write, reporting the version it leaves the clipboard at as soon as it knows it, even a failed or partial write's;
-    // it may throw, as EmulatedPrimarySelection catches
+    // Write, reporting the version it leaves the clipboard at as soon as it knows it, even a failed or partial write's
     ClipboardWrite Write(ClipboardContents contents, Action<long> leftAt);
+}
+
+// a clipboard whose emulated selection is set in the same step as a write beside it, so a copy the user makes before the
+// write begins is caught before the selection is set, never after it (EmulatedPrimarySelection)
+internal interface IWritesBesideSelection
+{
+    // Write, selection set first unless null
+    ClipboardWrite Write(ClipboardContents contents, string? selection);
 }
 
 public sealed record ClipboardPlatform(IClipboard Clipboard, IPrimarySelection? PrimarySelection) : IClipboardPlatform

@@ -248,7 +248,7 @@ public sealed class XorgClipboardSync : IClipboardPlatform, IClipboard, IDisposa
     }
 
     // whether CLIPBOARD is still Hydra's, whichever write was last: SelectionClear forgets it once another client takes it
-    public bool StillHolds(ClipboardWrite.Written write)
+    public bool StillHolds(ClipboardWrite.Written? write)
     {
         lock (_dataLock)
             return _ownedClipboard != null;

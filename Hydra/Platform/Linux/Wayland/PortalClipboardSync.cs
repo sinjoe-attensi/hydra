@@ -28,7 +28,7 @@ namespace Hydra.Platform.Linux.Wayland;
 // reverse) cannot be served and fails. A transfer waits a little for the latest pull to settle (TransferWait, once per pull),
 // then serves the newest: that answer, else the own copy. The own copy is the user's, not Hydra's write: it reads back
 // as itself, moves no counter, and allows no echo fallback.
-internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPullObserver, ICaptureClipboard, IAsyncDisposable
+internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IWritesBesideSelection, IPullObserver, ICaptureClipboard, IAsyncDisposable
 {
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(2);
     // how long a call waits for the portal session before taking the clipboard as unknown
@@ -177,7 +177,7 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
     public bool HoldsFiles() => Resolve(wait: false) is { Fallback: { } fallback } && fallback.Clipboard.HoldsFiles();
 
     // the portal's: whether the session still owns the selection with Hydra's last write, whichever it was
-    public bool StillHolds(ClipboardWrite.Written write)
+    public bool StillHolds(ClipboardWrite.Written? write)
     {
         if (Resolve(wait: false) is { Fallback: { } fallback }) return fallback.Clipboard.StillHolds(write);
         lock (_lock) return OwnsWrite();
@@ -197,12 +197,23 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
         }
     }
 
-    public ClipboardWrite Write(ClipboardContents contents) => Resolve(wait: true) switch
+    public ClipboardWrite Write(ClipboardContents contents) => Write(contents, null);
+
+    // to the portal, through the emulated selection, which sets the selection in the same step; the fallback's own
+    // selection is set before its write
+    public ClipboardWrite Write(ClipboardContents contents, string? selection)
     {
-        { Fallback: { } fallback } => fallback.Clipboard.Write(contents),
-        { Portal: not null } => _primary.Clipboard.Write(contents),
-        _ => new ClipboardWrite.NotReplaced("the portal's clipboard is not connected"),
-    };
+        switch (Resolve(wait: true))
+        {
+            case { Fallback: { } fallback }:
+                if (selection != null) fallback.KeepSelection(selection);
+                return fallback.Clipboard.Write(contents);
+            case { Portal: not null }:
+                return _primary.WriteClipboard(contents, selection);
+            default:
+                return new ClipboardWrite.NotReplaced("the portal's clipboard is not connected");
+        }
+    }
 
     // the write to the portal itself, which the emulated selection makes: to the portal as it stands
     private ClipboardWrite WritePortal(ClipboardContents contents, Action<long> leftAt)
@@ -972,7 +983,7 @@ internal sealed class PortalClipboardSync : IClipboardPlatform, IClipboard, IPul
 
         public ClipboardVersion? Version => sync.Version;
 
-        public bool StillHolds(ClipboardWrite.Written write) => sync.StillHolds(write);
+        public bool StillHolds(ClipboardWrite.Written? write) => sync.StillHolds(write);
     }
 
     private sealed record GenerationRead(long Generation, ClipboardContents Read);

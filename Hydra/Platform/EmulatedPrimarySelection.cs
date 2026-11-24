@@ -43,12 +43,13 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
         return new SelectionWrite.Kept();
     });
 
-    // Hydra's own write of the clipboard: until it ends, what is on the clipboard is no copy of the user's. The clipboard
-    // reports the version it leaves as soon as it knows it, even a failed or partial write's; a failure is logged, not
-    // thrown. The gate is never held across the write, so a platform may take its own clipboard lock inside it
-    private ClipboardWrite WriteClipboard(ClipboardContents contents)
+    // Hydra's own write of the clipboard, with the selection beside it unless null: until it ends, what is on the
+    // clipboard is no copy of the user's. The clipboard reports the version it leaves as soon as it knows it, even a
+    // failed or partial write's; a failure is logged, not thrown. The gate is never held across the write, so a platform
+    // may take its own clipboard lock inside it
+    internal ClipboardWrite WriteClipboard(ClipboardContents contents, string? selection)
     {
-        if (!Begin()) return new ClipboardWrite.NotReplaced("the clipboard's version could not be read");
+        if (!Begin(selection)) return new ClipboardWrite.NotReplaced("the clipboard's version could not be read");
         long? left = null;
         try
         {
@@ -69,10 +70,11 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
         }
     }
 
-    // a copy made since Hydra last touched the clipboard is looked for before the write begins
-    private bool Begin() => Guarded("begin writing clipboard", false, () =>
+    // a copy made since Hydra last touched the clipboard is looked for before the write begins, and is older than the
+    // selection beside it
+    private bool Begin(string? selection) => Guarded("begin writing clipboard", false, () =>
     {
-        RelayAt(null, _clipboard.Counter());
+        RelayAt(selection, _clipboard.Counter());
         _writing++;
         return true;
     });
@@ -126,22 +128,24 @@ public sealed class EmulatedPrimarySelection : IPrimarySelection
     }
 
     // the clipboard, its writes made through the selection
-    private sealed class WritingThrough(EmulatedPrimarySelection selection, ISelectionlessClipboard clipboard) : IClipboard
+    private sealed class WritingThrough(EmulatedPrimarySelection selection, ISelectionlessClipboard clipboard) : IClipboard, IWritesBesideSelection
     {
         public ClipboardRead Read() => clipboard.Read();
 
-        public ClipboardWrite Write(ClipboardContents contents) => selection.WriteClipboard(contents);
+        public ClipboardWrite Write(ClipboardContents contents) => selection.WriteClipboard(contents, null);
+
+        public ClipboardWrite Write(ClipboardContents contents, string? beside) => selection.WriteClipboard(contents, beside);
 
         public bool HoldsFiles() => clipboard.HoldsFiles();
 
         public ClipboardVersion? Version => clipboard.Version;
 
-        public bool StillHolds(ClipboardWrite.Written write) => clipboard.StillHolds(write);
+        public bool StillHolds(ClipboardWrite.Written? write) => clipboard.StillHolds(write);
     }
 }
 
-// the version Hydra's last write left a clipboard at, as that write reported it, and whether the clipboard is still that
-// write; for a platform whose write reports it (ISelectionlessClipboard)
+// the version Hydra's last write left a clipboard at, as that write reported it (a failed write's too), and whether the
+// clipboard is still there; for a platform whose write reports it (ISelectionlessClipboard)
 internal sealed class LastWrite(Func<long> counter, ILogger log)
 {
     private readonly Lock _lock = new();
@@ -156,7 +160,7 @@ internal sealed class LastWrite(Func<long> counter, ILogger log)
         }
     }
 
-    // whether the clipboard is still what Hydra's last write left
+    // whether the clipboard is still what Hydra's last write left, failed or not; never before any write reported a version
     public bool Holds()
     {
         try
@@ -169,10 +173,6 @@ internal sealed class LastWrite(Func<long> counter, ILogger log)
             return false;
         }
     }
-
-    // whether the clipboard is still write: at the version it left, the last any write of Hydra's reported (a failed one's
-    // too), and moved by nothing since
-    public bool Holds(ClipboardWrite.Written write) => write.At is { } at && At == at.Value && Holds();
 
     // Hydra's write: it reports the version it leaves the clipboard at to leftAt as soon as it knows it, and returns what
     // it wrote, null when it did not replace the clipboard. The version is kept once the write ends, even a failed or

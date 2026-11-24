@@ -591,7 +591,7 @@ public class PortalClipboardSyncTests
         {
             Assert.That(_sync.SetClipboard(Snapshot("written", null, null)), Is.Null);
             Assert.That(_sync.Count(), Is.EqualTo(before));
-            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
+            Assert.That(_sync.StillHolds(null), Is.False);
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied"));
         }
     }
@@ -695,7 +695,7 @@ public class PortalClipboardSyncTests
     {
         _portal.OtherAppCopies(new() { ["text/plain;charset=utf-8"] = "copied"u8.ToArray() });
 
-        Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
+        Assert.That(_sync.StillHolds(null), Is.False);
     }
 
     // a notice of the owner Hydra's write replaced, delivered after the write, is older than it
@@ -1133,7 +1133,7 @@ public class PortalClipboardSyncTests
             Assert.That(_portal.Offers.Single(), Does.Not.Contain("text/rtf").And.Not.Contain("image/png").And.Not.Contain("x-kde-passwordManagerHint"));
             Assert.That(_sync.Read().AsContents(), Is.EqualTo(new ClipboardContents("copied", "<i>copied</i>", null, null, false)), "the own copy reads as itself");
             Assert.That(_sync.Count(), Is.EqualTo(count), "the claim is no copy and no write");
-            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False, "the own copy is the user's, not Hydra's write");
+            Assert.That(_sync.StillHolds(null), Is.False, "the own copy is the user's, not Hydra's write");
             Assert.That(_sync.ReadPrimary().TextOrNone(), Is.EqualTo("copied"), "a text copy is still the primary");
         }
     }
@@ -1583,7 +1583,7 @@ public class PortalClipboardSyncTests
         {
             Assert.That(_sync.Count(), Is.EqualTo(count + 1));
             Assert.That(_sync.Read().AsContents().Text, Is.EqualTo("copied again"));
-            Assert.That(_sync.StillHolds(ClipboardChanges.NothingWritten), Is.False);
+            Assert.That(_sync.StillHolds(null), Is.False);
             Assert.That(_sync.SetClipboard(Snapshot("from the slave", null, null)), Is.Null,
                 "the session no longer holds the selection, and the portal sets none without the capture");
             Assert.That(_portal.Transfer("text/plain;charset=utf-8", 1), Is.Null);

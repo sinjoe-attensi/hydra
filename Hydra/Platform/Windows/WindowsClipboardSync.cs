@@ -137,7 +137,8 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
 
     public bool HoldsFiles() => NativeMethods.IsClipboardFormatAvailable(NativeMethods.CF_HDROP);
 
-    public bool StillHolds(ClipboardWrite.Written write) => _lastWrite.Holds(write);
+    // by the version Hydra's last write reported, whichever write that was
+    public bool StillHolds(ClipboardWrite.Written? write) => _lastWrite.Holds();
 
     // the sequence number, which EmulatedPrimarySelection versions by too
     public long Counter() => NativeMethods.GetClipboardSequenceNumber();
@@ -228,7 +229,7 @@ public sealed class WindowsClipboardSync : IClipboardPlatform, ISelectionlessCli
                     _log.LogWarning("Failed to open clipboard to write it after {Tries} tries", OpenTries);
                     return null;
                 }
-                return WhileOpen(() => WriteOpenClipboard(contents, dib), () =>
+                return WhileOpen(() => ClipboardUtils.Took(contents, WriteOpenClipboard(contents, dib)), () =>
                 {
                     // after closing, which moves the sequence number too; read before asking who owns the clipboard, so
                     // another app writing after either leaves it untaken, never taken as ours

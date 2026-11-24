@@ -17,7 +17,7 @@ public static class ClipboardUtils
     // clipboard still holds lastWritten, Hydra's last write, whose echo was suppressed; a fresh copy of any one type keeps
     // stale formats from coming back. The selection is read as it stands, never from the fallback. Null when the clipboard
     // could not be read, which is unknown, never empty
-    public static ClipboardSnapshot? ReadWithFallback(IClipboardPlatform platform, ClipboardContents? fallback, ClipboardWrite.Written lastWritten,
+    public static ClipboardSnapshot? ReadWithFallback(IClipboardPlatform platform, ClipboardContents? fallback, ClipboardWrite.Written? lastWritten,
         ILogger log, string context)
     {
         switch (platform.Clipboard.Read())
@@ -46,7 +46,7 @@ public static class ClipboardUtils
     // the selection as it stands; one that could not be read is none
     private static string? SelectionText(IClipboardPlatform platform) => platform.ReadSelection() is SelectionRead.Text { Value: var text } ? text : null;
 
-    private static ClipboardSnapshot Read(IClipboardPlatform platform, ClipboardContents read, ClipboardContents? fallback, ClipboardWrite.Written lastWritten,
+    private static ClipboardSnapshot Read(IClipboardPlatform platform, ClipboardContents read, ClipboardContents? fallback, ClipboardWrite.Written? lastWritten,
         ILogger log, string context)
     {
         var selection = SelectionText(platform);
@@ -91,6 +91,11 @@ public static class ClipboardUtils
         return marked;
     }
 
+    // what a write of asked took, null where it did not replace the clipboard: a concealed copy whose markers were refused
+    // and whose placeholder in their place was refused too left nothing of Hydra's there
+    public static ClipboardContents? Took(ClipboardContents asked, ClipboardContents? taken) =>
+        asked.Secret && taken is { Secret: false, Text: null } ? null : taken;
+
     // every format of a write of contents, in the platform's order, each null when absent; one the clipboard refuses is
     // warned about, and the rest are still written. What was written: contents less the refused formats
     public static ClipboardContents WriteAll(ILogger log, ClipboardContents contents, params FormatWrite?[] writes)
@@ -123,9 +128,8 @@ public static class ClipboardUtils
             return KeptSelection(platform, copy.Selection);
         }
 
-        if (copy.Selection is { } selection) platform.KeepSelection(selection);
         var clear = IsPlaceholder(copy.Clipboard);
-        var write = platform.Clipboard.Write(clear ? ClipboardContents.Empty : copy.Clipboard);
+        var write = WriteBeside(platform, clear ? ClipboardContents.Empty : copy.Clipboard, copy.Selection);
         // the selection is set again after a failed write, or one that took no format, since only the selection's write
         // says whether this host could keep it
         if (write is not ClipboardWrite.Written written) return new Applied.Failed(write, KeptSelection(platform, copy.Selection));
@@ -135,6 +139,14 @@ public static class ClipboardUtils
             return new Applied.Emptied(written, ClipboardSnapshot.Empty with { Selection = KeptSelection(platform, copy.Selection)?.Text });
         if (written.Taken.IsEmpty) return new Applied.Failed(written, KeptSelection(platform, copy.Selection));
         return new Applied.Copy(written, copy.Selection);
+    }
+
+    // the write, the selection set first unless null: in the same step where the selection is emulated
+    private static ClipboardWrite WriteBeside(IClipboardPlatform platform, ClipboardContents contents, string? selection)
+    {
+        if (platform.Clipboard is IWritesBesideSelection beside) return beside.Write(contents, selection);
+        if (selection != null) platform.KeepSelection(selection);
+        return platform.Clipboard.Write(contents);
     }
 
     // the selection alone; none when not kept

@@ -1,6 +1,7 @@
 using Hydra.Platform;
 using Tests.Setup;
 using Microsoft.Extensions.Logging.Abstractions;
+using static Tests.Setup.Snapshots;
 
 namespace Tests.Clipboard;
 
@@ -32,13 +33,13 @@ public class EmulatedPrimarySelectionTests
         _text = text;
     }
 
-    // Hydra's write through the selection, the selection beside it set first, as ClipboardUtils.ApplyPreservingFiles
-    // makes it; whether it replaced the clipboard
+    // Hydra's write through the selection, the selection beside it set in the same step, as
+    // ClipboardUtils.ApplyPreservingFiles makes it; whether it replaced the clipboard
     private bool Write(string? incoming, Func<Action<long>, bool> write)
     {
-        if (incoming != null) _primary.Write(incoming);
         _writing = write;
-        return _primary.Clipboard.Write(new ClipboardContents("written", null, null, null, false)) is ClipboardWrite.Written;
+        return ((IWritesBesideSelection)_primary.Clipboard).Write(new ClipboardContents("written", null, null, null, false), incoming)
+            is ClipboardWrite.Written;
     }
 
     private void HydraWrites(string? incoming, string written) => Write(incoming, leftAt =>
@@ -148,42 +149,22 @@ public class EmulatedPrimarySelectionTests
     {
         // Windows reports no version when another app owns the clipboard after the write
         var last = new LastWrite(() => _version, NullLogger.Instance);
-        var written = last.Write(_ =>
+        last.Write(_ =>
         {
             _version++;
             return ClipboardContents.Empty;
         }, _ => { }, () => _version);
 
-        using (Assert.EnterMultipleScope())
-        {
-            Assert.That(last.Holds(), Is.False);
-            Assert.That(last.Holds((ClipboardWrite.Written)written), Is.False, "at the counter after it, which is no version it reported");
-        }
+        Assert.That(last.Holds(), Is.False);
     }
 
+    // a failed write still reports where it left the clipboard, as macOS' clear before a failure: the clipboard is Hydra's
+    // write there, though no write the relay recorded left it
     [Test]
-    public void Holds_AWrite_OnlyWhileNothingReplacedIt()
+    public void Holds_AfterAFailedWriteThatReportedItsVersion()
     {
         var last = new LastWrite(() => _version, NullLogger.Instance);
-        var earlier = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
-        var later = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
-
-        using (Assert.EnterMultipleScope())
-        {
-            Assert.That(last.Holds(earlier), Is.False, "Hydra's own later write replaced it");
-            Assert.That(last.Holds(later), Is.True);
-            Assert.That(last.Holds(new ClipboardWrite.Written(ClipboardContents.Empty, null)), Is.False, "a write at no version is none");
-        }
-        UserCopies("written");
-        Assert.That(last.Holds(later), Is.False, "the user's copy replaced it");
-    }
-
-    // a failed write still reports where it left the clipboard, as Windows' failed clear and macOS' clear before a failure
-    [Test]
-    public void Holds_NotAWriteAFailedOneMovedPast()
-    {
-        var last = new LastWrite(() => _version, NullLogger.Instance);
-        var written = (ClipboardWrite.Written)last.Write(LeavingVersion, _ => { }, () => _version);
+        last.Write(LeavingVersion, _ => { }, () => _version);
 
         var failed = last.Write(left =>
         {
@@ -194,8 +175,39 @@ public class EmulatedPrimarySelectionTests
         using (Assert.EnterMultipleScope())
         {
             Assert.That(failed, Is.InstanceOf<ClipboardWrite.NotReplaced>());
-            Assert.That(last.Holds(written), Is.False);
-            Assert.That(last.Holds(), Is.True, "the echo filter's: the clipboard is still what Hydra's last write left");
+            Assert.That(last.Holds(), Is.True);
+        }
+    }
+
+    // the user's copy landing after the selection is set but before the write begins is no longer caught as the primary:
+    // the two are one step, so the peer's selection wins over a copy the write is about to replace
+    [Test]
+    public void ApplyPreservingFiles_ACopyBeforeTheWriteBegins_LeavesThePeersSelection()
+    {
+        var platform = new ClipboardPlatform(_primary.Clipboard, new CopyingAfterKeep(_primary, () => UserCopies("copied meanwhile")));
+        _writing = leftAt =>
+        {
+            _version++;
+            _text = "written";
+            leftAt(_version);
+            return true;
+        };
+
+        ClipboardUtils.ApplyPreservingFiles(platform, Snapshot("written", "selected on linux", null), NullLogger.Instance, "test");
+
+        Assert.That(_primary.Read().TextOrNone(), Is.EqualTo("selected on linux"));
+    }
+
+    // the selection, the user copying as soon as it is kept
+    private sealed class CopyingAfterKeep(IPrimarySelection selection, Action copy) : IPrimarySelection
+    {
+        public SelectionRead Read() => selection.Read();
+
+        public SelectionWrite Write(string text)
+        {
+            var kept = selection.Write(text);
+            copy();
+            return kept;
         }
     }
 

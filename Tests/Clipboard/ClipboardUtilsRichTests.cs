@@ -522,7 +522,7 @@ public class ClipboardUtilsRichTests
         }
 
         public bool HoldsFiles() => throw new AssertionException("read outside Read");
-        public bool StillHolds(ClipboardWrite.Written write) => false;
+        public bool StillHolds(ClipboardWrite.Written? write) => false;
         public ClipboardWrite Write(ClipboardContents contents) => ClipboardUtils.Written(contents, null);
     }
 
@@ -547,6 +547,24 @@ public class ClipboardUtilsRichTests
             new FormatWrite(ClipboardFormat.Html, () => true), new FormatWrite(ClipboardFormat.Text, () => true));
 
         Assert.That(written, Is.SameAs(contents));
+    }
+
+    // as Windows and macOS write a concealed copy: one whose markers were refused goes in as the placeholder, and when the
+    // placeholder is refused too nothing of Hydra's replaced the clipboard
+    [Test]
+    public void Took_ConcealedCopy_RefusedMarkersAndPlaceholder_IsNotReplaced()
+    {
+        var asked = new ClipboardContents("secret", null, null, null, true);
+        var marked = ClipboardUtils.WriteMarkers(Log, asked, () => false, () => true);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(ClipboardUtils.Took(asked, ClipboardUtils.WriteAll(Log, marked, new FormatWrite(ClipboardFormat.Text, () => false))),
+                Is.Null);
+            Assert.That(ClipboardUtils.Took(asked, ClipboardUtils.WriteAll(Log, marked, new FormatWrite(ClipboardFormat.Text, () => true))),
+                Is.SameAs(marked), "the placeholder taken");
+            Assert.That(ClipboardUtils.Took(asked, asked with { Text = null }), Is.Not.Null, "markers taken, the text refused");
+        }
     }
 
     [Test]
